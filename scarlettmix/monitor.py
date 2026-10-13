@@ -64,6 +64,8 @@ class Monitor:
         self.released: set[int] = set()
         # Mono: blue pairs play the sum of their two channels on both.
         self.mono = False
+        # Pad: the interface's own attenuator on the main monitor outputs.
+        self.pad = False
         self._mtime = 0.0
 
     @property
@@ -105,6 +107,7 @@ class Monitor:
                            **{int(k): int(v) for k, v in data.get("parked", {}).items()}}
             self.released = {int(i) for i in data.get("released", [])}
             self.mono = bool(data.get("mono", False))
+            self.pad = bool(data.get("pad", False))
             return True
         except (OSError, ValueError, AttributeError):
             return False
@@ -114,7 +117,8 @@ class Monitor:
         tmp = self.path() + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"outputs": self.states, "parked": self.parked,
-                       "released": sorted(self.released), "mono": self.mono}, f)
+                       "released": sorted(self.released), "mono": self.mono,
+                       "pad": self.pad}, f)
         os.replace(tmp, self.path())
         self._mtime = os.path.getmtime(self.path())
 
@@ -149,6 +153,8 @@ class Monitor:
         for e in self.device.hw_masks[1:]:
             self.device.write(e, [self.mask()])
         self._park_levels()
+        if self.device.hw_pad:
+            self.device.write(self.device.hw_pad, [int(self.pad)])
         # Mono applies to a pair only when both of its outputs are blue, as in the original.
         for pair, e in enumerate(self.device.hw_mono):
             both = self.states[2 * pair:2 * pair + 2] == [BLUE, BLUE]

@@ -1,5 +1,5 @@
 --- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
-+++ b/sound/usb/mixer_scarlett.c	2026-10-13 15:58:43.890660308 -0700
++++ b/sound/usb/mixer_scarlett.c	2026-10-13 16:49:15.228847413 -0700
 @@ -514,13 +514,16 @@
  
  		val = ucontrol->value.integer.value[i];
@@ -354,7 +354,7 @@
  /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
  static const struct snd_kcontrol_new usb_forte_ctl_enum = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-@@ -1391,6 +1691,68 @@
+@@ -1391,6 +1691,69 @@
  	if (err < 0)
  		return err;
  
@@ -391,8 +391,9 @@
 +		};
 +
 +		/*
-+		 * Two controls MixControl uses on unit 0x14 whose meaning is
-+		 * not yet confirmed; exposed under neutral names for testing.
++		 * Unit 0x14: control 8 is a pad on the main monitor outputs,
++		 * control 0x0a is mono per output pair. Neutral names, kept
++		 * from when their meaning was being tested.
 +		 */
 +		err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1, NULL, 0x14,
 +				  0x08, 1, USB_MIXER_U8, 1,

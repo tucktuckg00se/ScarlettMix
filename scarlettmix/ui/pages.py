@@ -386,13 +386,23 @@ class MonitorPanel(QWidget):
         row.addWidget(self.dim)
         row.addWidget(self.mute)
         lay.addLayout(row)
-        self.mono = None
+        self.mono = self.pad = None
+        extras = QHBoxLayout()
         if device.hw_mono:
             self.mono = ToggleButton("Mono", "#5b9bd5",
                                      "Mono: blue output pairs play left and right summed")
             self.mono.setChecked(monitor.mono)
             self.mono.clicked.connect(self._mono_clicked)
-            lay.addWidget(self.mono)
+            extras.addWidget(self.mono)
+        if device.hw_pad:
+            self.pad = ToggleButton("Pad", "#e0a800",
+                                    "Pad: makes the main monitor outputs quieter "
+                                    "(labelled -20 dB in the original)")
+            self.pad.setChecked(monitor.pad)
+            self.pad.clicked.connect(self._pad_clicked)
+            extras.addWidget(self.pad)
+        if extras.count():
+            lay.addLayout(extras)
 
         grid = QGridLayout()
         grid.setSpacing(4)
@@ -429,9 +439,15 @@ class MonitorPanel(QWidget):
             b.set_state(state)
         if self.mono:
             self.mono.setChecked(self.monitor.mono)
+        if self.pad:
+            self.pad.setChecked(self.monitor.pad)
 
     def _mono_clicked(self, on: bool) -> None:
         self.monitor.mono = on
+        self._commit()
+
+    def _pad_clicked(self, on: bool) -> None:
+        self.monitor.pad = on
         self._commit()
 
     def _use_preset(self, outputs: list[int]) -> None:

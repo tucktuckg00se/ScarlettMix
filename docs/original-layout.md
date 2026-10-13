@@ -77,4 +77,5 @@ Mixes are numbered, never lettered.
   the original's blue / silver / red states. Each click moves to the next
   state; the original toggles blue and red and needs shift-click for silver. Silver returns an output to its own level
   rather than forcing 0 dB.
-- Not present: PFL, Mono, the on-screen monitor knob and Monitor Preset.
+- Also with the patched driver: Mono, Pad and the Monitor Preset menu.
+- Not present: PFL and an on-screen monitor knob (the knob position is shown).

@@ -633,3 +633,16 @@ def test_mono_applies_to_fully_blue_pairs_only(xdevice):
     mon.mono = False
     mon.apply()
     assert [xdevice.get(e)[0] for e in xdevice.hw_mono] == [0, 0, 0, 0, 0]
+
+
+def test_monitor_pad(xdevice, tmp_path, monkeypatch):
+    from scarlettmix.monitor import Monitor
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mon = Monitor(xdevice)
+    mon.apply()
+    assert xdevice.get(xdevice.hw_pad) == [0]
+    mon.pad = True
+    mon.apply(); mon.save()
+    assert xdevice.get(xdevice.hw_pad) == [1]
+    again = Monitor(Device(FakeBackend(extras=True)))
+    assert again.load() and again.pad is True

@@ -109,11 +109,11 @@ carried it at -21.7 dB (the sum of the two channels, halved); other pairs'
 controls had no effect on 3/4. MixControl sets it for pairs whose two
 buttons are both blue.
 
-**Unit `0x14`, control 8, channel 1: stores a bit, purpose not found.** It
-reads back what is written (off after power-on here). Switching it on changed
-nothing measurable on output 3, silver or blue. The default snapshot's
-monitor `pad` attribute and the exe's "-20dB" / "Pad" labels suggest a
-monitor pad acting on outputs 1/2 only; not verified.
+**Monitor pad: confirmed by ear.** Unit `0x14`, control 8, channel 1, one
+byte, `bRequest` CUR, readable. With music playing, switching it on made the
+main monitor outputs 1/2 clearly quieter; it changed nothing measurable on
+output 3. The amount was not measured. The default snapshot's monitor `pad`
+attribute and the exe's "-20dB" / "Pad" control images refer to it.
 
 **The monitor knob appears to act on outputs 1/2 only, in firmware.** No
 register tried here brought another output under it: with output 3 in mask
