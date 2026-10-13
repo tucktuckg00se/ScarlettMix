@@ -1,5 +1,5 @@
 --- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
-+++ b/sound/usb/mixer_scarlett.c	2026-10-13 14:49:44.970804833 -0700
++++ b/sound/usb/mixer_scarlett.c	2026-10-13 15:55:08.341510274 -0700
 @@ -514,13 +514,16 @@
  
  		val = ucontrol->value.integer.value[i];
@@ -337,7 +337,7 @@
  /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
  static const struct snd_kcontrol_new usb_forte_ctl_enum = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-@@ -1391,6 +1674,68 @@
+@@ -1391,6 +1674,87 @@
  	if (err < 0)
  		return err;
  
@@ -371,6 +371,13 @@
 +			  "Monitor Mask 0x0b" },
 +			{ &usb_scarlett_ctl_mask, 0x0c, USB_MIXER_U32, 1,
 +			  "Monitor Mask 0x0c" },
++			/* test: can the masks be read? (the vendor software never does) */
++			{ &usb_scarlett_ctl_status, 0x0a, USB_MIXER_U8, 4,
++			  "Monitor Mask 0x0a Readback" },
++			{ &usb_scarlett_ctl_status, 0x0b, USB_MIXER_U8, 4,
++			  "Monitor Mask 0x0b Readback" },
++			{ &usb_scarlett_ctl_status, 0x0c, USB_MIXER_U8, 4,
++			  "Monitor Mask 0x0c Readback" },
 +		};
 +
 +		/*
@@ -388,6 +395,18 @@
 +			err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1_wo,
 +					  NULL, 0x14, 0x0a, i + 1,
 +					  USB_MIXER_U8, 1, mx, NULL, &elem);
++			if (err < 0)
++				return err;
++		}
++
++		/* test: can mono be read? */
++		for (i = 0; i < 5; i++) {
++			snprintf(mx, sizeof(mx),
++				 "Monitor Unit 20 Control 10 Pair %d Readback",
++				 i + 1);
++			err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1, NULL,
++					  0x14, 0x0a, i + 1, USB_MIXER_U8, 1,
++					  mx, NULL, &elem);
 +			if (err < 0)
 +				return err;
 +		}
