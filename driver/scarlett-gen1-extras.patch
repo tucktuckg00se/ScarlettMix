@@ -1,0 +1,275 @@
+--- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
++++ b/sound/usb/mixer_scarlett.c	2026-10-13 13:35:08.731142540 -0700
+@@ -719,6 +719,175 @@
+ 	return 0;
+ }
+ 
++/*
++ * Registers on the mixer unit (0x3c), reached with bRequest = UAC2_CS_MEM.
++ * elem->idx_off is the register number and elem->channels the number of
++ * values. Used by the level meters, the front-panel status word, "Save To
++ * HW" and the monitor (hardware volume knob) configuration.
++ */
++static int scarlett_mem_xfer(struct usb_mixer_elem_info *elem, bool in,
++			     unsigned char *buf, int len)
++{
++	struct snd_usb_audio *chip = elem->head.mixer->chip;
++	int wValue = (elem->control << 8) | elem->idx_off;
++	int idx = snd_usb_ctrl_intf(elem->head.mixer->hostif) |
++		  (elem->head.id << 8);
++
++	return snd_usb_ctl_msg(chip->dev,
++			       in ? usb_rcvctrlpipe(chip->dev, 0) :
++				    usb_sndctrlpipe(chip->dev, 0),
++			       UAC2_CS_MEM,
++			       USB_RECIP_INTERFACE | USB_TYPE_CLASS |
++			       (in ? USB_DIR_IN : USB_DIR_OUT),
++			       wValue, idx, buf, len);
++}
++
++/* level meters: one little-endian 16-bit value per channel */
++static int scarlett_level_info(struct snd_kcontrol *kctl,
++			       struct snd_ctl_elem_info *uinfo)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	uinfo->count = elem->channels;
++	uinfo->value.integer.min = 0;
++	uinfo->value.integer.max = 65535;
++	uinfo->value.integer.step = 1;
++	return 0;
++}
++
++static int scarlett_level_get(struct snd_kcontrol *kctl,
++			      struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf[2 * MAX_CHANNELS] = {0, };
++	int i, err;
++
++	err = scarlett_mem_xfer(elem, true, buf, 2 * elem->channels);
++	if (err < 0)
++		return err;
++
++	for (i = 0; i < elem->channels; i++)
++		ucontrol->value.integer.value[i] =
++			buf[2 * i] | (buf[2 * i + 1] << 8);
++	return 0;
++}
++
++/* front-panel status: four bytes, returned as they are */
++static int scarlett_status_info(struct snd_kcontrol *kctl,
++				struct snd_ctl_elem_info *uinfo)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	uinfo->count = elem->channels;
++	uinfo->value.integer.min = 0;
++	uinfo->value.integer.max = 255;
++	uinfo->value.integer.step = 1;
++	return 0;
++}
++
++static int scarlett_status_get(struct snd_kcontrol *kctl,
++			       struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf[MAX_CHANNELS] = {0, };
++	int i, err;
++
++	err = scarlett_mem_xfer(elem, true, buf, elem->channels);
++	if (err < 0)
++		return err;
++
++	for (i = 0; i < elem->channels; i++)
++		ucontrol->value.integer.value[i] = buf[i];
++	return 0;
++}
++
++/* "Save To HW": writing 1 stores the current settings in the device */
++static int scarlett_save_get(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	ucontrol->value.integer.value[0] = 0;
++	return 0;
++}
++
++static int scarlett_save_put(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf = 0xa5;
++	int err;
++
++	if (!ucontrol->value.integer.value[0])
++		return 0;
++
++	err = scarlett_mem_xfer(elem, false, &buf, 1);
++	return err < 0 ? err : 0;
++}
++
++/* one-byte on/off register; the device is not asked for its state */
++static int scarlett_hwsw_get(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++
++	ucontrol->value.integer.value[0] = elem->cache_val[0];
++	return 0;
++}
++
++static int scarlett_hwsw_put(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf = !!ucontrol->value.integer.value[0];
++	int changed = elem->cache_val[0] != buf;
++	int err;
++
++	err = scarlett_mem_xfer(elem, false, &buf, 1);
++	if (err < 0)
++		return err;
++
++	elem->cache_val[0] = buf;
++	return changed;
++}
++
++/* output bit mask: bit n = analogue output n + 1, sent as 32-bit LE */
++static int scarlett_mask_info(struct snd_kcontrol *kctl,
++			      struct snd_ctl_elem_info *uinfo)
++{
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	uinfo->count = 1;
++	uinfo->value.integer.min = 0;
++	uinfo->value.integer.max = 1023;
++	uinfo->value.integer.step = 1;
++	return 0;
++}
++
++static int scarlett_mask_put(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned int mask = ucontrol->value.integer.value[0];
++	unsigned char buf[4];
++	int changed, err;
++
++	if (mask > 1023)
++		return -EINVAL;
++
++	buf[0] = mask & 0xff;
++	buf[1] = (mask >> 8) & 0xff;
++	buf[2] = 0;
++	buf[3] = 0;
++	changed = elem->cache_val[0] != mask;
++
++	err = scarlett_mem_xfer(elem, false, buf, 4);
++	if (err < 0)
++		return err;
++
++	elem->cache_val[0] = mask;
++	return changed;
++}
++
+ static const struct snd_kcontrol_new usb_scarlett_ctl_switch = {
+ 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+ 	.name = "",
+@@ -777,6 +946,46 @@
+ 	.get =  scarlett_ctl_meter_get,
+ };
+ 
++static const struct snd_kcontrol_new usb_scarlett_ctl_level = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.access = SNDRV_CTL_ELEM_ACCESS_READ | SNDRV_CTL_ELEM_ACCESS_VOLATILE,
++	.name = "",
++	.info = scarlett_level_info,
++	.get =  scarlett_level_get,
++};
++
++static const struct snd_kcontrol_new usb_scarlett_ctl_status = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.access = SNDRV_CTL_ELEM_ACCESS_READ | SNDRV_CTL_ELEM_ACCESS_VOLATILE,
++	.name = "",
++	.info = scarlett_status_info,
++	.get =  scarlett_status_get,
++};
++
++static const struct snd_kcontrol_new usb_scarlett_ctl_save = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.name = "",
++	.info = snd_ctl_boolean_mono_info,
++	.get =  scarlett_save_get,
++	.put =  scarlett_save_put,
++};
++
++static const struct snd_kcontrol_new usb_scarlett_ctl_hwsw = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.name = "",
++	.info = snd_ctl_boolean_mono_info,
++	.get =  scarlett_hwsw_get,
++	.put =  scarlett_hwsw_put,
++};
++
++static const struct snd_kcontrol_new usb_scarlett_ctl_mask = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.name = "",
++	.info = scarlett_mask_info,
++	.get =  scarlett_hwsw_get,
++	.put =  scarlett_mask_put,
++};
++
+ /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
+ static const struct snd_kcontrol_new usb_forte_ctl_enum = {
+ 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+@@ -1391,6 +1600,49 @@
+ 	if (err < 0)
+ 		return err;
+ 
++	/*
++	 * Level meters, front-panel status, save and monitor configuration.
++	 * Only tested on the 18i20, whose channel counts are used here.
++	 */
++	if (mixer->chip->usb_id == USB_ID(0x1235, 0x800c)) {
++		static const struct {
++			const struct snd_kcontrol_new *ctl;
++			int reg, type, channels;
++			const char *name;
++		} mem_ctls[] = {
++			{ &usb_scarlett_ctl_level, 0x00, USB_MIXER_U16, 18,
++			  "Input Level Meter" },
++			{ &usb_scarlett_ctl_level, 0x01, USB_MIXER_U16, 8,
++			  "Mix Level Meter" },
++			{ &usb_scarlett_ctl_level, 0x03, USB_MIXER_U16, 20,
++			  "PCM Level Meter" },
++			{ &usb_scarlett_ctl_status, 0x04, USB_MIXER_U8, 4,
++			  "Monitor Hardware Status" },
++			{ &usb_scarlett_ctl_save, 0x5a, USB_MIXER_U8, 1,
++			  "Save To HW" },
++			{ &usb_scarlett_ctl_hwsw, 0x05, USB_MIXER_U8, 1,
++			  "Monitor Hardware Mute" },
++			{ &usb_scarlett_ctl_hwsw, 0x06, USB_MIXER_U8, 1,
++			  "Monitor Hardware Dim" },
++			{ &usb_scarlett_ctl_mask, 0x0a, USB_MIXER_U32, 1,
++			  "Monitor Mask 0x0a" },
++			{ &usb_scarlett_ctl_mask, 0x0b, USB_MIXER_U32, 1,
++			  "Monitor Mask 0x0b" },
++			{ &usb_scarlett_ctl_mask, 0x0c, USB_MIXER_U32, 1,
++			  "Monitor Mask 0x0c" },
++		};
++
++		for (i = 0; i < ARRAY_SIZE(mem_ctls); i++) {
++			err = add_new_ctl(mixer, mem_ctls[i].ctl, NULL, 0x3c,
++					  0x00, mem_ctls[i].reg,
++					  mem_ctls[i].type,
++					  mem_ctls[i].channels,
++					  mem_ctls[i].name, NULL, &elem);
++			if (err < 0)
++				return err;
++		}
++	}
++
+ 	return err;
+ }
+ 
