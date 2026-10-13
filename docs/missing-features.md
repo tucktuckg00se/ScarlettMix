@@ -61,9 +61,14 @@ watching which byte changed.
 | setup restored, test routing value set, saved | routing came up as saved, including the test value |
 | gains verified by meter, saved | a tone on DAW 3 reached Mix 1 at the saved 0 dB with nothing rewritten; a tone on DAW 9 (saved as off) reached no mix |
 
-So the save covers output routing, mixer-input routing and mixer gains.
-Output levels and mutes could not be checked: there is no meter after them
-and the unit does not report them truthfully (below).
+So the save covers output routing, mixer-input routing and mixer gains. A
+later power cycle, measured through the output-3 loopback, showed it also
+covers output levels (saved at -10 dB, measured -10 dB after power-on), the
+three monitor masks (saved 3 / 11 / 7, read back the same) and mono.
+
+That same power cycle confirmed the read-back problem below for output
+levels and mutes: the driver read output 3 as 0 dB and muted while it
+measured -10 dB and was audible.
 
 **Hardware Mute and Dim, and their output masks: confirmed.** Measured with
 line output 3 looped into another sound card's line input, a -20 dBFS tone
