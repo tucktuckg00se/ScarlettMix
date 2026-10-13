@@ -179,9 +179,11 @@ Routine `0x458f5c`: write 1 byte `0xa5` to register `0x5a`
 settings in the interface so they survive a power cycle. The kernel source
 documents the identical command but never issues it.
 
-A sibling routine `0x458f21` writes `0xb5` to register `0x5b`. Its purpose is
-not established; by its position next to save it is probably restore-factory
-or reload. It should not be sent until that is known.
+A sibling routine `0x458f21` writes `0xb5` to register `0x5b`. The exe's
+error message for it is "Failed to send debug command to flash" (beside
+"Failed to persist device settings" for the save command), so it is a
+developer command aimed at the unit's flash memory. What it does is not
+stated anywhere in the binary. It must not be sent.
 
 ### Monitor knob, dim and mute
 
