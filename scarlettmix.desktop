@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=ScarlettMix
+Comment=Mixer and routing for Focusrite Scarlett interfaces
+Exec=scarlettmix
+Icon=audio-card
+Categories=AudioVideo;Audio;Mixer;
+Keywords=Focusrite;Scarlett;MixControl;mixer;routing;

@@ -1,0 +1,5 @@
+# Lets the logged-in desktop user send raw USB requests to first-generation
+# Scarletts, for the features the kernel driver does not offer.
+# Install:  sudo cp contrib/70-scarlett-usb.rules /etc/udev/rules.d/
+#           sudo udevadm control --reload && sudo udevadm trigger --attr-match=idVendor=1235
+SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="1235", ATTR{idProduct}=="8002|8004|800c|8012|8014", TAG+="uaccess"
