@@ -46,7 +46,8 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
 - **With the patched driver**: level meters beside the faders; File ▸ Save to
   Hardware; and the monitor section's Dim, Mute and ten output buttons. Blue
   outputs follow the front-panel knob, Mute and Dim; silver ones are
-  independent; red ones are muted. Each click moves to the next state. The knob is followed in
+  independent; red ones are muted. Each click moves to the next state.
+  Mono and the original's Monitor Preset menu are there too. The knob is followed in
   software by the background service for outputs other than 1/2.
 - **Clock**: source selection, lock indicator, current sample rate.
 - **Presets**: save and load complete setups as JSON, and open original
@@ -98,5 +99,10 @@ returns, and the interface still does not remember them when used standalone.
     scarlettmix/ui/          PySide6 interface
     docs/mixcontrol-protocol.md   how the original works, with evidence
     docs/missing-features.md      meters, save and monitor knob: protocol and plan
+    driver/                       patched kernel driver: patch, build, load, revert
 
 Tests: `python -m pytest`. They run against the simulated device only.
+
+`tests/data/Default.18i20` is a snapshot file shipped with Focusrite's
+MixControl, kept as a test fixture. Remove it before publishing this
+repository.

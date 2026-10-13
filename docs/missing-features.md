@@ -129,7 +129,10 @@ on that input reached no mix. Because the driver then treats a request for
 0 dB as "no change" and sends nothing, `alsactl restore` (and any other
 restorer) silently fails to restore every mixer gain that should be at 0 dB.
 Writing a different value first gets through; ScarlettMix's restore does
-that now. Routing reads back correctly. A driver reload without a power
+that now. A driver fix (always send level and switch writes) is in the
+patch and was tested: after a power cycle one plain write of 0 dB reached
+the unit, confirmed by the mix meter. The service's forced restore was
+verified the same way on that power cycle. Routing reads back correctly. A driver reload without a power
 cycle reads gains back correctly, so the unit does report values it has
 been sent.
 
