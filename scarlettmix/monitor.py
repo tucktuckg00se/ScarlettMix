@@ -19,7 +19,8 @@ docs/missing-features.md):
     is followed in software: read its position, set their level. Those
     outputs must therefore stay out of the third mask.
 
-The masks cannot be read back, so the button states are kept in a file.
+The masks are not read back (the original never does, and reading them is
+untried), so the button states are kept in a file.
 Needs the controls of the patched driver.
 """
 

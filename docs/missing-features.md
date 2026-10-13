@@ -79,7 +79,7 @@ routed to it, and one output bit added to each mask in turn:
 
 Each mask is written as a 32-bit little-endian value, bit *n* for analogue
 output *n* + 1. Removing the bit restored the earlier behaviour every time.
-The masks cannot be read back; on this unit outputs 1/2 behaved as if all
+Reading the masks back has not been tried (MixControl never does); on this unit outputs 1/2 behaved as if all
 three masks were `0x003`.
 
 **What MixControl's ten monitor buttons send** (static analysis of the
