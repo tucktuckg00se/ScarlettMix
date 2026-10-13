@@ -619,4 +619,4 @@ def test_monitor_presets_from_the_original(xdevice):
     assert mon.states == [SILVER] * 6 + [BLUE, BLUE] + [SILVER] * 2
     mon.apply()                                       # 1/2 leave the knob safely, 7/8 join Mute/Dim
     assert xdevice.get(xdevice.hw_masks[0]) == [0] and xdevice.get(xdevice.hw_masks[1]) == [0b0011000000]
-    assert Monitor(Device(FakeBackend())).presets() != [] or True
+    assert not Monitor(Device(FakeBackend())).available         # menu is not shown on the stock driver
