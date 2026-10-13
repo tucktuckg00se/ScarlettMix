@@ -95,6 +95,19 @@ the blue / silver / red states):
 MixControl writes all three masks together. Output levels are sent as
 `dB * 32768 / 127`.
 
+**Mono per output pair: confirmed.** Unit `0x14`, control `0x0a`, channel
+*pair* (1 = outputs 1/2 ... 5 = outputs 9/10), one byte, `bRequest` CUR. With
+a tone on output 3 only and the control on for pair 2, outputs 3 and 4 both
+carried it at -21.7 dB (the sum of the two channels, halved); other pairs'
+controls had no effect on 3/4. MixControl sets it for pairs whose two
+buttons are both blue.
+
+**Unit `0x14`, control 8, channel 1: stores a bit, purpose not found.** It
+reads back what is written (off after power-on here). Switching it on changed
+nothing measurable on output 3, silver or blue. The default snapshot's
+monitor `pad` attribute and the exe's "-20dB" / "Pad" labels suggest a
+monitor pad acting on outputs 1/2 only; not verified.
+
 **The monitor knob appears to act on outputs 1/2 only, in firmware.** No
 register tried here brought another output under it: with output 3 in mask
 `0x0a` (alone, or in all three masks) its level did not move when the knob

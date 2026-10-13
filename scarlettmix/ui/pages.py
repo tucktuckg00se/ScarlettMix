@@ -386,6 +386,13 @@ class MonitorPanel(QWidget):
         row.addWidget(self.dim)
         row.addWidget(self.mute)
         lay.addLayout(row)
+        self.mono = None
+        if device.hw_mono:
+            self.mono = ToggleButton("Mono", "#5b9bd5",
+                                     "Mono: blue output pairs play left and right summed")
+            self.mono.setChecked(monitor.mono)
+            self.mono.clicked.connect(self._mono_clicked)
+            lay.addWidget(self.mono)
 
         grid = QGridLayout()
         grid.setSpacing(4)
@@ -420,6 +427,12 @@ class MonitorPanel(QWidget):
     def sync(self) -> None:
         for b, state in zip(self.buttons, self.monitor.states):
             b.set_state(state)
+        if self.mono:
+            self.mono.setChecked(self.monitor.mono)
+
+    def _mono_clicked(self, on: bool) -> None:
+        self.monitor.mono = on
+        self._commit()
 
     def _use_preset(self, outputs: list[int]) -> None:
         self.monitor.use_preset(outputs)

@@ -121,6 +121,8 @@ class FakeBackend(Backend):
                 ("Monitor Mask 0x0a", TYPE_INTEGER, 1, 1023, True, 0),
                 ("Monitor Mask 0x0b", TYPE_INTEGER, 1, 1023, True, 0),
                 ("Monitor Mask 0x0c", TYPE_INTEGER, 1, 1023, True, 0),
+                *((f"Monitor Unit 20 Control 10 Pair {i}", TYPE_BOOLEAN, 1, 0, True, 0)
+                  for i in range(1, 6)),
             ):
                 numid += 1
                 self._elems.append(ElemInfo(numid, name, 0, kind, count, True, writable, 0, hi))

@@ -620,3 +620,16 @@ def test_monitor_presets_from_the_original(xdevice):
     mon.apply()                                       # 1/2 leave the knob safely, 7/8 join Mute/Dim
     assert xdevice.get(xdevice.hw_masks[0]) == [0] and xdevice.get(xdevice.hw_masks[1]) == [0b0011000000]
     assert not Monitor(Device(FakeBackend())).available         # menu is not shown on the stock driver
+
+
+def test_mono_applies_to_fully_blue_pairs_only(xdevice):
+    from scarlettmix.monitor import BLUE, Monitor
+    mon = Monitor(xdevice)
+    mon.states[2] = BLUE                                 # output 3 blue, 4 silver
+    mon.states[6] = mon.states[7] = BLUE                 # 7/8 both blue
+    mon.mono = True
+    mon.apply()
+    assert [xdevice.get(e)[0] for e in xdevice.hw_mono] == [1, 0, 0, 1, 0]
+    mon.mono = False
+    mon.apply()
+    assert [xdevice.get(e)[0] for e in xdevice.hw_mono] == [0, 0, 0, 0, 0]

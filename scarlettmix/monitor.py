@@ -61,6 +61,8 @@ class Monitor:
         self.parked: dict[int, int] = {}
         # First-pair outputs already handed over to software level control.
         self.released: set[int] = set()
+        # Mono: blue pairs play the sum of their two channels on both.
+        self.mono = False
         self._mtime = 0.0
 
     @property
@@ -101,6 +103,7 @@ class Monitor:
             self.parked = {**self.parked,
                            **{int(k): int(v) for k, v in data.get("parked", {}).items()}}
             self.released = {int(i) for i in data.get("released", [])}
+            self.mono = bool(data.get("mono", False))
             return True
         except (OSError, ValueError, AttributeError):
             return False
@@ -110,7 +113,7 @@ class Monitor:
         tmp = self.path() + ".tmp"
         with open(tmp, "w") as f:
             json.dump({"outputs": self.states, "parked": self.parked,
-                       "released": sorted(self.released)}, f)
+                       "released": sorted(self.released), "mono": self.mono}, f)
         os.replace(tmp, self.path())
         self._mtime = os.path.getmtime(self.path())
 
@@ -145,6 +148,10 @@ class Monitor:
         for e in self.device.hw_masks[1:]:
             self.device.write(e, [self.mask()])
         self._park_levels()
+        # Mono applies to a pair only when both of its outputs are blue, as in the original.
+        for pair, e in enumerate(self.device.hw_mono):
+            both = self.states[2 * pair:2 * pair + 2] == [BLUE, BLUE]
+            self.device.write(e, [int(self.mono and both)])
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.switch:
                 continue

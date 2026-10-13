@@ -107,6 +107,8 @@ class Device:
         self.hw_dim = n("Monitor Hardware Dim")
         self.hw_masks = [e for e in (n("Monitor Mask 0x0a"), n("Monitor Mask 0x0b"),
                                      n("Monitor Mask 0x0c")) if e]
+        # Mono per analogue output pair (test-driver name until it has a final one).
+        self.hw_mono = [e for e in (n(f"Monitor Unit 20 Control 10 Pair {i}") for i in range(1, 9)) if e]
         self.input_switches.sort(key=lambda e: [int(t) if t.isdigit() else t
                                                 for t in re.split(r"(\d+)", e.name)])
 
