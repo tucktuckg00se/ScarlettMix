@@ -1,5 +1,5 @@
 --- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
-+++ b/sound/usb/mixer_scarlett.c	2026-10-13 15:55:08.341510274 -0700
++++ b/sound/usb/mixer_scarlett.c	2026-10-13 15:58:43.890660308 -0700
 @@ -514,13 +514,16 @@
  
  		val = ucontrol->value.integer.value[i];
@@ -42,21 +42,21 @@
  	}
  
  	return changed;
-@@ -719,6 +721,227 @@
+@@ -719,6 +721,253 @@
  	return 0;
  }
  
 +/*
 + * Registers on the mixer unit (0x3c), reached with bRequest = UAC2_CS_MEM.
-+ * elem->idx_off is the register number and elem->channels the number of
-+ * values. Used by the level meters, the front-panel status word, "Save To
-+ * HW" and the monitor (hardware volume knob) configuration.
++ * A control's own register is elem->idx_off, and elem->channels is its
++ * number of values. Used by the level meters, the front-panel status
++ * word, "Save To HW" and the monitor configuration.
 + */
-+static int scarlett_mem_xfer(struct usb_mixer_elem_info *elem, bool in,
-+			     unsigned char *buf, int len)
++static int scarlett_mem_xfer(struct usb_mixer_elem_info *elem, int reg,
++			     bool in, unsigned char *buf, int len)
 +{
 +	struct snd_usb_audio *chip = elem->head.mixer->chip;
-+	int wValue = (elem->control << 8) | elem->idx_off;
++	int wValue = (elem->control << 8) | reg;
 +	int idx = snd_usb_ctrl_intf(elem->head.mixer->hostif) |
 +		  (elem->head.id << 8);
 +
@@ -142,7 +142,7 @@
 +	unsigned char buf[2 * MAX_CHANNELS] = {0, };
 +	int i, err;
 +
-+	err = scarlett_mem_xfer(elem, true, buf, 2 * elem->channels);
++	err = scarlett_mem_xfer(elem, elem->idx_off, true, buf, 2 * elem->channels);
 +	if (err < 0)
 +		return err;
 +
@@ -173,7 +173,7 @@
 +	unsigned char buf[MAX_CHANNELS] = {0, };
 +	int i, err;
 +
-+	err = scarlett_mem_xfer(elem, true, buf, elem->channels);
++	err = scarlett_mem_xfer(elem, elem->idx_off, true, buf, elem->channels);
 +	if (err < 0)
 +		return err;
 +
@@ -200,17 +200,27 @@
 +	if (!ucontrol->value.integer.value[0])
 +		return 0;
 +
-+	err = scarlett_mem_xfer(elem, false, &buf, 1);
++	err = scarlett_mem_xfer(elem, elem->idx_off, false, &buf, 1);
 +	return err < 0 ? err : 0;
 +}
 +
-+/* one-byte on/off register; the device is not asked for its state */
++/*
++ * Mute (register 0x05) and Dim (0x06): one byte, on/off. Their state is
++ * read from the front-panel status word in register 0x04, bytes 2 and 3.
++ */
 +static int scarlett_hwsw_get(struct snd_kcontrol *kctl,
 +			     struct snd_ctl_elem_value *ucontrol)
 +{
 +	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf[4] = {0, };
++	int err;
 +
-+	ucontrol->value.integer.value[0] = elem->cache_val[0];
++	err = scarlett_mem_xfer(elem, 0x04, true, buf, sizeof(buf));
++	if (err < 0)
++		return err;
++
++	ucontrol->value.integer.value[0] = !!buf[elem->idx_off - 0x03];
++	elem->cache_val[0] = ucontrol->value.integer.value[0];
 +	return 0;
 +}
 +
@@ -222,7 +232,7 @@
 +	int changed = elem->cache_val[0] != buf;
 +	int err;
 +
-+	err = scarlett_mem_xfer(elem, false, &buf, 1);
++	err = scarlett_mem_xfer(elem, elem->idx_off, false, &buf, 1);
 +	if (err < 0)
 +		return err;
 +
@@ -239,6 +249,22 @@
 +	uinfo->value.integer.min = 0;
 +	uinfo->value.integer.max = 1023;
 +	uinfo->value.integer.step = 1;
++	return 0;
++}
++
++static int scarlett_mask_get(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf[4] = {0, };
++	int err;
++
++	err = scarlett_mem_xfer(elem, elem->idx_off, true, buf, sizeof(buf));
++	if (err < 0)
++		return err;
++
++	elem->cache_val[0] = (buf[0] | (buf[1] << 8)) & 1023;
++	ucontrol->value.integer.value[0] = elem->cache_val[0];
 +	return 0;
 +}
 +
@@ -259,7 +285,7 @@
 +	buf[3] = 0;
 +	changed = elem->cache_val[0] != mask;
 +
-+	err = scarlett_mem_xfer(elem, false, buf, 4);
++	err = scarlett_mem_xfer(elem, elem->idx_off, false, buf, 4);
 +	if (err < 0)
 +		return err;
 +
@@ -270,7 +296,7 @@
  static const struct snd_kcontrol_new usb_scarlett_ctl_switch = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
  	.name = "",
-@@ -777,6 +1000,66 @@
+@@ -777,6 +1026,57 @@
  	.get =  scarlett_ctl_meter_get,
  };
  
@@ -306,7 +332,7 @@
 +	.put =  scarlett_hwsw_put,
 +};
 +
-+/* reads the device each time */
++/* one-byte on/off control that reads the device each time */
 +static const struct snd_kcontrol_new usb_scarlett_ctl_cur1 = {
 +	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 +	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE |
@@ -317,27 +343,18 @@
 +	.put =  scarlett_cur1_put,
 +};
 +
-+/* write only: reads return what was last written */
-+static const struct snd_kcontrol_new usb_scarlett_ctl_cur1_wo = {
-+	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-+	.name = "",
-+	.info = snd_ctl_boolean_mono_info,
-+	.get =  scarlett_hwsw_get,
-+	.put =  scarlett_cur1_put,
-+};
-+
 +static const struct snd_kcontrol_new usb_scarlett_ctl_mask = {
 +	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 +	.name = "",
 +	.info = scarlett_mask_info,
-+	.get =  scarlett_hwsw_get,
++	.get =  scarlett_mask_get,
 +	.put =  scarlett_mask_put,
 +};
 +
  /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
  static const struct snd_kcontrol_new usb_forte_ctl_enum = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-@@ -1391,6 +1674,87 @@
+@@ -1391,6 +1691,68 @@
  	if (err < 0)
  		return err;
  
@@ -371,13 +388,6 @@
 +			  "Monitor Mask 0x0b" },
 +			{ &usb_scarlett_ctl_mask, 0x0c, USB_MIXER_U32, 1,
 +			  "Monitor Mask 0x0c" },
-+			/* test: can the masks be read? (the vendor software never does) */
-+			{ &usb_scarlett_ctl_status, 0x0a, USB_MIXER_U8, 4,
-+			  "Monitor Mask 0x0a Readback" },
-+			{ &usb_scarlett_ctl_status, 0x0b, USB_MIXER_U8, 4,
-+			  "Monitor Mask 0x0b Readback" },
-+			{ &usb_scarlett_ctl_status, 0x0c, USB_MIXER_U8, 4,
-+			  "Monitor Mask 0x0c Readback" },
 +		};
 +
 +		/*
@@ -392,21 +402,9 @@
 +		for (i = 0; i < 5; i++) {
 +			snprintf(mx, sizeof(mx),
 +				 "Monitor Unit 20 Control 10 Pair %d", i + 1);
-+			err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1_wo,
++			err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1,
 +					  NULL, 0x14, 0x0a, i + 1,
 +					  USB_MIXER_U8, 1, mx, NULL, &elem);
-+			if (err < 0)
-+				return err;
-+		}
-+
-+		/* test: can mono be read? */
-+		for (i = 0; i < 5; i++) {
-+			snprintf(mx, sizeof(mx),
-+				 "Monitor Unit 20 Control 10 Pair %d Readback",
-+				 i + 1);
-+			err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1, NULL,
-+					  0x14, 0x0a, i + 1, USB_MIXER_U8, 1,
-+					  mx, NULL, &elem);
 +			if (err < 0)
 +				return err;
 +		}
