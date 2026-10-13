@@ -33,6 +33,22 @@ from .device import Device, db_to_level
 BLUE, SILVER, RED = "blue", "silver", "red"
 STATES = (BLUE, SILVER, RED)
 
+# The original's "Monitor Preset..." menu: which analogue outputs (numbered
+# from 1) follow the monitor section. Read from the 18i20 table in
+# Scarlett MixControl 1.10.
+PRESETS = {
+    "1235:800c": [
+        ("Mono", [3]),
+        ("Stereo", [1, 2]),
+        ("Quad", [1, 2, 7, 8]),
+        ("2.1 Surround", [1, 2, 4]),
+        ("5.1 Surround", [1, 2, 3, 4, 7, 8]),
+        ("7.1 Surround", [1, 2, 3, 4, 5, 6, 7, 8]),
+        ("Mid+Phones 1", [7, 8]),
+        ("Mini+Phones 2", [9, 10]),
+    ],
+}
+
 
 class Monitor:
     def __init__(self, device: Device):
@@ -50,6 +66,14 @@ class Monitor:
     @property
     def available(self) -> bool:
         return self.device.has_monitor and bool(self.channels)
+
+    def presets(self) -> list[tuple[str, list[int]]]:
+        return [(name, outs) for name, outs in PRESETS.get(self.device.backend.usb_id, [])
+                if max(outs) <= len(self.channels)]
+
+    def use_preset(self, outputs: list[int]) -> None:
+        """Listed outputs follow the monitor section; the rest become independent."""
+        self.states = [BLUE if i + 1 in outputs else SILVER for i in range(len(self.channels))]
 
     # -- persistence ---------------------------------------------------------
 

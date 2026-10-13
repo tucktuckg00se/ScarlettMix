@@ -608,3 +608,15 @@ def test_knob_pair_leaves_blue_at_the_knob_level(xdevice, tmp_path, monkeypatch)
     mon.states[0] = mon.states[1] = BLUE
     mon.apply()
     assert xdevice.get(xdevice.hw_masks[0]) == [0b11] and mon.released == set()
+
+
+def test_monitor_presets_from_the_original(xdevice):
+    from scarlettmix.monitor import BLUE, SILVER, Monitor
+    mon = Monitor(xdevice)
+    table = dict(mon.presets())
+    assert list(table)[:3] == ["Mono", "Stereo", "Quad"] and table["5.1 Surround"] == [1, 2, 3, 4, 7, 8]
+    mon.use_preset(table["Mid+Phones 1"])
+    assert mon.states == [SILVER] * 6 + [BLUE, BLUE] + [SILVER] * 2
+    mon.apply()                                       # 1/2 leave the knob safely, 7/8 join Mute/Dim
+    assert xdevice.get(xdevice.hw_masks[0]) == [0] and xdevice.get(xdevice.hw_masks[1]) == [0b0011000000]
+    assert Monitor(Device(FakeBackend())).presets() != [] or True

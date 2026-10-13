@@ -1,6 +1,48 @@
 --- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
-+++ b/sound/usb/mixer_scarlett.c	2026-10-13 13:35:08.731142540 -0700
-@@ -719,6 +719,175 @@
++++ b/sound/usb/mixer_scarlett.c	2026-10-13 14:49:44.970804833 -0700
+@@ -514,13 +514,16 @@
+ 
+ 		val = ucontrol->value.integer.value[i];
+ 		val = !val;
+-		if (oval != val) {
+-			err = snd_usb_set_cur_mix_value(elem, i, i, val);
+-			if (err < 0)
+-				return err;
+-
++		/*
++		 * Always send: after power-on the device does not report its
++		 * real state, so a cached value equal to the requested one
++		 * does not mean the device has it.
++		 */
++		err = snd_usb_set_cur_mix_value(elem, i, i, val);
++		if (err < 0)
++			return err;
++		if (oval != val)
+ 			changed = 1;
+-		}
+ 	}
+ 
+ 	return changed;
+@@ -586,13 +589,12 @@
+ 		val = ucontrol->value.integer.value[i] -
+ 			SND_SCARLETT_LEVEL_BIAS;
+ 		val = val * 256;
+-		if (oval != val) {
+-			err = snd_usb_set_cur_mix_value(elem, i, i, val);
+-			if (err < 0)
+-				return err;
+-
++		/* always send; see scarlett_ctl_switch_put() */
++		err = snd_usb_set_cur_mix_value(elem, i, i, val);
++		if (err < 0)
++			return err;
++		if (oval != val)
+ 			changed = 1;
+-		}
+ 	}
+ 
+ 	return changed;
+@@ -719,6 +721,227 @@
  	return 0;
  }
  
@@ -25,6 +67,58 @@
 +			       USB_RECIP_INTERFACE | USB_TYPE_CLASS |
 +			       (in ? USB_DIR_IN : USB_DIR_OUT),
 +			       wValue, idx, buf, len);
++}
++
++/*
++ * One-byte on/off control reached with bRequest = UAC2_CS_CUR:
++ * wValue = (elem->control << 8) | elem->idx_off on unit elem->head.id.
++ */
++static int scarlett_cur1_xfer(struct usb_mixer_elem_info *elem, bool in,
++			      unsigned char *buf)
++{
++	struct snd_usb_audio *chip = elem->head.mixer->chip;
++	int wValue = (elem->control << 8) | elem->idx_off;
++	int idx = snd_usb_ctrl_intf(elem->head.mixer->hostif) |
++		  (elem->head.id << 8);
++
++	return snd_usb_ctl_msg(chip->dev,
++			       in ? usb_rcvctrlpipe(chip->dev, 0) :
++				    usb_sndctrlpipe(chip->dev, 0),
++			       UAC2_CS_CUR,
++			       USB_RECIP_INTERFACE | USB_TYPE_CLASS |
++			       (in ? USB_DIR_IN : USB_DIR_OUT),
++			       wValue, idx, buf, 1);
++}
++
++static int scarlett_cur1_get(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf = 0;
++	int err;
++
++	err = scarlett_cur1_xfer(elem, true, &buf);
++	if (err < 0)
++		return err;
++
++	ucontrol->value.integer.value[0] = !!buf;
++	return 0;
++}
++
++static int scarlett_cur1_put(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	unsigned char buf = !!ucontrol->value.integer.value[0];
++	int changed = elem->cache_val[0] != buf;
++	int err;
++
++	err = scarlett_cur1_xfer(elem, false, &buf);
++	if (err < 0)
++		return err;
++
++	elem->cache_val[0] = buf;
++	return changed;
 +}
 +
 +/* level meters: one little-endian 16-bit value per channel */
@@ -176,7 +270,7 @@
  static const struct snd_kcontrol_new usb_scarlett_ctl_switch = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
  	.name = "",
-@@ -777,6 +946,46 @@
+@@ -777,6 +1000,66 @@
  	.get =  scarlett_ctl_meter_get,
  };
  
@@ -212,6 +306,26 @@
 +	.put =  scarlett_hwsw_put,
 +};
 +
++/* reads the device each time */
++static const struct snd_kcontrol_new usb_scarlett_ctl_cur1 = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.access = SNDRV_CTL_ELEM_ACCESS_READWRITE |
++		  SNDRV_CTL_ELEM_ACCESS_VOLATILE,
++	.name = "",
++	.info = snd_ctl_boolean_mono_info,
++	.get =  scarlett_cur1_get,
++	.put =  scarlett_cur1_put,
++};
++
++/* write only: reads return what was last written */
++static const struct snd_kcontrol_new usb_scarlett_ctl_cur1_wo = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.name = "",
++	.info = snd_ctl_boolean_mono_info,
++	.get =  scarlett_hwsw_get,
++	.put =  scarlett_cur1_put,
++};
++
 +static const struct snd_kcontrol_new usb_scarlett_ctl_mask = {
 +	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 +	.name = "",
@@ -223,7 +337,7 @@
  /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
  static const struct snd_kcontrol_new usb_forte_ctl_enum = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-@@ -1391,6 +1600,49 @@
+@@ -1391,6 +1674,68 @@
  	if (err < 0)
  		return err;
  
@@ -258,6 +372,25 @@
 +			{ &usb_scarlett_ctl_mask, 0x0c, USB_MIXER_U32, 1,
 +			  "Monitor Mask 0x0c" },
 +		};
++
++		/*
++		 * Two controls MixControl uses on unit 0x14 whose meaning is
++		 * not yet confirmed; exposed under neutral names for testing.
++		 */
++		err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1, NULL, 0x14,
++				  0x08, 1, USB_MIXER_U8, 1,
++				  "Monitor Unit 20 Control 8", NULL, &elem);
++		if (err < 0)
++			return err;
++		for (i = 0; i < 5; i++) {
++			snprintf(mx, sizeof(mx),
++				 "Monitor Unit 20 Control 10 Pair %d", i + 1);
++			err = add_new_ctl(mixer, &usb_scarlett_ctl_cur1_wo,
++					  NULL, 0x14, 0x0a, i + 1,
++					  USB_MIXER_U8, 1, mx, NULL, &elem);
++			if (err < 0)
++				return err;
++		}
 +
 +		for (i = 0; i < ARRAY_SIZE(mem_ctls); i++) {
 +			err = add_new_ctl(mixer, mem_ctls[i].ctl, NULL, 0x3c,

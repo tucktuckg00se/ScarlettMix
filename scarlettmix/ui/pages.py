@@ -398,6 +398,19 @@ class MonitorPanel(QWidget):
             grid.addWidget(b, i % 2, i // 2)       # odd outputs on top, as in the original
             self.buttons.append(b)
         lay.addLayout(grid)
+        if monitor.presets():
+            preset = QToolButton()
+            preset.setText("Monitor Preset\u2026")
+            preset.setPopupMode(QToolButton.InstantPopup)
+            preset.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            preset.setToolTip("Choose which outputs follow the monitor section; the rest "
+                              "become independent")
+            menu = QMenu(preset)
+            for name, outs in monitor.presets():
+                menu.addAction(f"{name}  ({', '.join(map(str, outs))})",
+                               lambda outs=outs: self._use_preset(outs))
+            preset.setMenu(menu)
+            lay.addWidget(preset, 0, Qt.AlignHCenter)
         hint = QLabel("<small>blue: follows knob, Mute, Dim<br>silver: independent"
                       "<br>red: muted</small>")
         hint.setAlignment(Qt.AlignCenter)
@@ -408,8 +421,16 @@ class MonitorPanel(QWidget):
         for b, state in zip(self.buttons, self.monitor.states):
             b.set_state(state)
 
+    def _use_preset(self, outputs: list[int]) -> None:
+        self.monitor.use_preset(outputs)
+        self.sync()
+        self._commit()
+
     def _state_changed(self, index: int, state: str) -> None:
         self.monitor.states[index] = state
+        self._commit()
+
+    def _commit(self) -> None:
         self.monitor.apply()
         self.monitor.save()
         if self._knob is not None:
