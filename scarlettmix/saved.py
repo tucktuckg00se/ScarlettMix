@@ -33,6 +33,9 @@ class Saved:
             by_name = {e.name: key for key, e in device.matrix_gain.items()}
             self._gains = {by_name[n]: v for n, v in record.get("matrix", {}).items()
                            if n in by_name}
+        # Own levels of outputs the program is moving with the knob (set by
+        # whoever owns the monitor): those are compared, not the knob's position.
+        self.own_levels: dict[str, list[int]] = {}
         self._monitor: list[str] | None = (record or {}).get("monitor")
         self._monitor_saved: dict | None = (record or {}).get("monitor_saved")
 
@@ -42,7 +45,7 @@ class Saved:
         """Whether this control's value differs from the saved one."""
         if e is None or e.name not in self._controls:
             return False
-        values = self.device.get(e)
+        values = self.own_levels.get(e.name) or self.device.get(e)
         now = [e.items[v] for v in values] if e.type == TYPE_ENUMERATED else values
         return now != self._controls[e.name]
 
@@ -111,6 +114,8 @@ class Saved:
     def any(self, monitor=None) -> bool:
         if not self.known:
             return False
+        if monitor is not None and monitor.available:
+            self.own_levels = monitor.own_levels()
         if any(self.control(e) for e in presets._preset_controls(self.device)):
             return True
         if any(self.cell(i, b) for (i, b) in self._gains):
@@ -124,10 +129,12 @@ class Saved:
         anything that could not be applied."""
         if not self.known:
             return []
+        # Monitor buttons first: outputs that stop being followed get their own
+        # level back before the saved levels are applied over them.
+        if monitor is not None and monitor.available and self._monitor and monitor.fits(self._monitor):
+            monitor.apply(self._monitor)
         notes = presets.apply(self.record, self.device, controller, force=self.device.untrusted)
         if monitor is not None and monitor.available:
-            if self._monitor and monitor.fits(self._monitor):
-                monitor.apply(self._monitor)
             if self._monitor_saved:
                 monitor.set_mono(bool(self._monitor_saved.get("mono", False)))
                 monitor.set_pad(bool(self._monitor_saved.get("pad", False)))

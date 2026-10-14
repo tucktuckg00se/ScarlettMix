@@ -56,8 +56,15 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   the interface off and on: its monitor knob only takes up its outputs when
   it starts. Until ScarlettMix has saved once it has nothing to compare
   with and draws everything solid.
-  The program never changes anything by itself: opening it sends nothing,
-  and so does closing it unless you choose Discard or Save.
+- **The knob and newly blue outputs**: the interface only takes a new
+  output onto its monitor knob when it powers on. Until then the program
+  does that job while it is open: it reads the knob and sets the level of
+  every blue output the interface is not moving itself, so blue always means
+  "the knob controls it". Such an output goes back to its own level when it
+  stops being blue and when the program closes, so its level differs with
+  the program open and closed until the interface has been saved and
+  switched off and on. Its fader on the Output Levels tab is greyed out
+  ("monitor knob"). Apart from this the program changes nothing by itself.
   Mono, the monitor Pad and the original's Monitor Preset menu are there too.
 - **Clock**: source selection, lock indicator, current sample rate.
 - **Presets**: save and load complete setups as JSON, and open original

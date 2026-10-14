@@ -21,12 +21,20 @@ Each output is shown in one of three states:
   red     muted (the output's own mute switch)
 
 So an output is never added to the knob list of a running unit, only removed,
-and that list is always exactly what the knob is really controlling.
+and that list is always exactly what the unit's knob is really controlling.
+
+A blue output that is not on that list yet is moved by this program instead,
+for as long as something calls follow() with the knob's position (the open
+application does): its level is set from the knob, and the level it had
+before ("own level") is given back the moment it stops being followed.
 
 Needs the controls of the patched driver.
 """
 
 from __future__ import annotations
+
+import json
+import os
 
 from .device import Device, db_to_level
 
@@ -59,6 +67,8 @@ class Monitor:
         self.group = 0              # outputs its Mute and Dim act on
         self.mono = False
         self.pad = False
+        # Own level of each output this program is moving with the knob.
+        self.own: dict[int, int] = {}
         if self.available:
             self.refresh()
 
@@ -105,6 +115,15 @@ class Monitor:
         """Whether the unit's knob is controlling output i."""
         return self.states[i] == BLUE and bool(self.knob_list >> i & 1)
 
+    def followed(self, i: int) -> bool:
+        """Whether output i is one this program has to move with the knob."""
+        return self.states[i] == BLUE and not self.knob_list >> i & 1
+
+    def knob_controlled(self) -> set[str]:
+        """Names of the level controls the knob is in charge of, either way."""
+        return {o.volume.name for i, (o, _) in enumerate(self.channels)
+                if o.volume and self.states[i] == BLUE}
+
     def pending(self) -> list[int]:
         """Blue outputs the knob will only take over after a save and a restart."""
         return [i for i, s in enumerate(self.states) if s == BLUE and not self.on_knob(i)]
@@ -131,6 +150,7 @@ class Monitor:
                 self.device.set(output.switch, values)
         self._write_mono(self.mono, group)
         self.refresh()
+        self._settle()
 
     def _write_group(self, group: int) -> None:
         d = self.device
@@ -165,6 +185,7 @@ class Monitor:
                 d.set(output.switch, wanted)
         self._write_mono(self.mono, group)
         self.refresh()
+        self._settle()
 
     def set_mono(self, on: bool) -> None:
         self.refresh()
@@ -203,6 +224,95 @@ class Monitor:
                     values[side] = db_to_level(-knob, output.volume)
             # Forced: the driver may believe the level is already this value.
             self.device.set(output.volume, values, force=True)
+
+    # -- doing the knob's job for outputs the unit does not move yet -----------
+
+    def _note_path(self) -> str:
+        from .presets import config_dir
+        return os.path.join(config_dir(),
+                            f"following-{self.device.backend.usb_id.replace(':', '-')}.json")
+
+    def _read_note(self) -> dict[int, int]:
+        """Own levels noted by a run that never got to give them back (it was
+        killed). Only believed for the same connection of the interface."""
+        try:
+            with open(self._note_path()) as f:
+                note = json.load(f)
+            if note.get("connection") != self.device.backend.connection_id():
+                return {}
+            return {int(k): int(v) for k, v in note.get("own", {}).items()}
+        except (OSError, ValueError, AttributeError):
+            return {}
+
+    def _write_note(self) -> None:
+        try:
+            if not self.own:
+                if os.path.exists(self._note_path()):
+                    os.remove(self._note_path())
+                return
+            os.makedirs(os.path.dirname(self._note_path()), exist_ok=True)
+            with open(self._note_path(), "w") as f:
+                json.dump({"connection": self.device.backend.connection_id(), "own": self.own}, f)
+        except OSError:
+            pass                    # the note is only a safety net
+
+    def follow(self, attenuation: int) -> int:
+        """Set every followed output's level from the knob's position. The
+        level an output had before is noted first. Returns the writes made."""
+        written = 0
+        noted = False
+        note = None
+        for output in dict.fromkeys(o for o, _ in self.channels):
+            mine = [(i, side) for i, (o, side) in enumerate(self.channels)
+                    if o is output and self.followed(i)]
+            if not mine or not output.volume:
+                continue
+            values = self.device.get(output.volume)
+            for i, side in mine:
+                if side >= len(values):
+                    continue
+                if i not in self.own:
+                    note = self._read_note() if note is None else note
+                    self.own[i] = note.get(i, values[side])
+                    noted = True
+                values[side] = db_to_level(-attenuation, output.volume)
+            written += bool(self.device.set(output.volume, values))
+        if noted:
+            self._write_note()
+        return written
+
+    def own_levels(self) -> dict[str, list[int]]:
+        """Level controls of followed outputs, with their own level in place
+        of wherever the knob has put them."""
+        levels = {}
+        for i, own in self.own.items():
+            output, side = self.channels[i]
+            values = levels.setdefault(output.volume.name, self.device.get(output.volume))
+            if side < len(values):
+                values[side] = own
+        return levels
+
+    def stop_following(self, indices=None) -> None:
+        """Give followed outputs their own level back (all of them, or the
+        given ones) and forget it."""
+        chosen = [i for i in self.own if indices is None or i in indices]
+        if not chosen:
+            return
+        for output in dict.fromkeys(self.channels[i][0] for i in chosen):
+            values = self.device.get(output.volume)
+            for i in chosen:
+                o, side = self.channels[i]
+                if o is output and side < len(values):
+                    values[side] = self.own[i]
+            self.device.set(output.volume, values)
+        for i in chosen:
+            del self.own[i]
+        self._write_note()
+
+    def _settle(self) -> None:
+        """After a change: outputs that are no longer followed get their own
+        level back."""
+        self.stop_following([i for i in self.own if not self.followed(i)])
 
     def save_to_hardware(self) -> bool:
         """Store the unit's settings with the whole monitor group in the knob

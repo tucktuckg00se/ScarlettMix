@@ -221,6 +221,7 @@ class LevelStrip(QFrame):
                  subtitle: str | None = None, parent: QWidget | None = None):
         super().__init__(parent)
         self.device, self.volume, self.switch = device, volume, switch
+        self._on_knob = False
         self.setFrameShape(QFrame.StyledPanel)
         self.setMinimumWidth(96)
         lay = QVBoxLayout(self)
@@ -268,11 +269,19 @@ class LevelStrip(QFrame):
         if self.fader:
             db = level_to_db(max(self.device.get(self.volume)))
             self.fader.setDb(db)
-            self.value.setText(fmt_db(db) + " dB")
+            self.value.setText("monitor knob" if self._on_knob else fmt_db(db) + " dB")
         if self.mute:
             # The driver's switch is "on = audible".
             with QSignalBlocker(self.mute):
                 self.mute.setChecked(not any(self.device.get(self.switch)))
+
+    def set_on_knob(self, on: bool) -> None:
+        """Grey the fader out while the monitor knob is in charge of this level."""
+        if self.fader and on != self._on_knob:
+            self._on_knob = on
+            self.fader.setEnabled(self.volume.writable and not on)
+            self.fader.setToolTip("The monitor knob controls this output." if on else "")
+            self.sync()
 
     def mark(self, saved) -> bool:
         level, mute = saved.control(self.volume), saved.control(self.switch)
@@ -318,6 +327,10 @@ class OutputsPage(QWidget):
 
     def mark(self, saved) -> bool:
         return any([s.mark(saved) for s in set(self._strips.values())])
+
+    def set_on_knob(self, names: set[str]) -> None:
+        for s in set(self._strips.values()):
+            s.set_on_knob(bool(s.volume) and s.volume.name in names)
 
     def _changed(self, e: ElemInfo) -> None:
         if s := self._strips.get(e.numid):
@@ -415,6 +428,7 @@ class MonitorPanel(QWidget):
     def __init__(self, device: Device, monitor: Monitor, parent: QWidget | None = None):
         super().__init__(parent)
         self.device, self.monitor = device, monitor
+        self._knob: int | None = None
         self._unsaved = [False] * len(monitor.channels)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -517,16 +531,23 @@ class MonitorPanel(QWidget):
 
     def _use_preset(self, outputs: list[int]) -> None:
         self.monitor.use_preset(outputs)
+        if self._knob is not None:
+            self.monitor.follow(self._knob)
         self.sync()
         self.changed.emit()
 
     def _state_changed(self, index: int, state: str) -> None:
         self.monitor.set_state(index, state)
+        if self._knob is not None:
+            self.monitor.follow(self._knob)
         self.sync()
         self.changed.emit()
 
     def set_status(self, knob: int, mute: bool, dim: bool) -> None:
-        """Show the front panel."""
+        """Show the front panel, and do the knob's job for blue outputs the
+        interface does not move by itself yet."""
+        self._knob = knob
+        self.monitor.follow(knob)
         self.knob.setText("Knob  " + ("-\u221e" if knob >= 127 else f"{-knob:+d} dB" if knob else "0 dB"))
         self.mute.setChecked(mute)
         self.dim.setChecked(dim)

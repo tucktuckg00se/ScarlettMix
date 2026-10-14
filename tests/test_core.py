@@ -527,7 +527,7 @@ def test_monitor_is_read_from_the_interface_and_reading_sends_nothing(xdevice):
     assert [mon.on_knob(i) for i in (0, 1, 6, 7)] == [True, True, False, False]
     assert mon.pending() == [6, 7]                       # on the Mute/Dim lists, not the knob's
     assert mon.refresh() is False and b.writes == []     # looking never writes
-    assert not hasattr(mon, "follow") and not hasattr(mon, "save")   # no notes, no following
+    assert mon.own == {} and b.writes == []              # and nothing is followed unasked
 
 
 def test_click_changes_only_that_output(xdevice):
@@ -693,3 +693,77 @@ def test_saved_record_knows_its_connection():
     b.power_cycle()
     assert record["connection"] != b.connection_id()     # it has been restarted since
     assert Saved(d, record).known
+
+
+# -- doing the knob's job for outputs the interface does not move yet -------------
+
+def _level(d, label):
+    return d.get(next(o for o in d.outputs if o.label == label).volume)
+
+
+def test_blue_output_follows_the_knob_and_gets_its_level_back(xdevice):
+    from scarlettmix.monitor import BLUE, SILVER, Monitor
+    from scarlettmix.saved import Saved
+    d = xdevice; b = d.backend
+    line34 = next(o for o in d.outputs if o.label == "Line 3/4")
+    d.set(line34.volume, [118, 128])
+    mon = Monitor(d)
+    saved = Saved(d, presets.saved_record(d, MixController(d).model, mon))
+    others = {o.label: d.get(o.volume) for o in d.outputs if o.volume and o is not line34}
+
+    assert mon.follow(40) == 0 and mon.own == {}         # nothing blue off the knob: nothing to do
+    mon.set_state(2, BLUE)
+    assert mon.followed(2) and not mon.followed(0)       # 1/2 are the interface's own job
+    assert mon.follow(40) == 1 and d.get(line34.volume) == [88, 128] and mon.own == {2: 118}
+    mon.follow(60)
+    assert d.get(line34.volume) == [68, 128] and mon.own == {2: 118}
+    assert {o.label: d.get(o.volume) for o in d.outputs if o.volume and o is not line34} == others
+    assert line34.volume.name in mon.knob_controlled()
+
+    # turning the knob never makes anything "not saved": only the button is
+    saved.any(mon)
+    assert not saved.control(line34.volume) and saved.monitor(mon)[2]
+    assert presets.saved_record(d, MixController(d).model, mon)["controls"][line34.volume.name] == [118, 128]
+
+    mon.set_state(2, SILVER)                             # stops being followed
+    assert d.get(line34.volume) == [118, 128] and mon.own == {}
+    mon.set_state(2, BLUE); mon.follow(60)
+    mon.stop_following()                                 # the application closes
+    assert d.get(line34.volume) == [118, 128] and mon.own == {}
+
+
+def test_following_survives_restarts_of_the_program(xdevice):
+    from scarlettmix.monitor import BLUE, Monitor
+    d = xdevice
+    line34 = next(o for o in d.outputs if o.label == "Line 3/4")
+    d.set(line34.volume, [118, 128])
+    mon = Monitor(d); mon.set_state(2, BLUE); mon.follow(40)
+    mon.stop_following()                                 # closed normally
+    again = Monitor(d); again.follow(40)                 # reopened: still blue, follows again
+    assert d.get(line34.volume) == [88, 128] and again.own == {2: 118}
+
+    killed = Monitor(d)                                  # previous run died without giving it back
+    assert d.get(line34.volume) == [88, 128]             # level still where the knob left it
+    killed.follow(50)
+    assert killed.own == {2: 118}                        # own level recovered from the note
+    killed.stop_following()
+    assert d.get(line34.volume) == [118, 128]
+
+    d.backend.power_cycle()                              # a note from another power session is not believed
+    mon = Monitor(d); mon.set_state(2, BLUE); mon.follow(40)
+    stale = Monitor(d); d.backend.power_cycle()
+    stale2 = Monitor(d); stale2.set_state(2, BLUE); stale2.follow(30)
+    assert stale2.own == {2: 88}
+
+
+def test_nothing_is_followed_once_the_interface_has_taken_over(xdevice):
+    from scarlettmix.monitor import BLUE, Monitor
+    d = xdevice; b = d.backend
+    mon = Monitor(d); mon.set_state(6, BLUE); mon.set_state(7, BLUE); mon.follow(40)
+    hp = _level(d, "Line 7/8")
+    assert hp == [88, 88]
+    mon.save_to_hardware(); mon.stop_following()
+    b.power_cycle()
+    b.writes.clear()
+    after = Monitor(d)
+    assert after.follow(55) == 0 and b.writes == [] and after.own == {}

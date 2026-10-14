@@ -81,9 +81,9 @@ Mixes are numbered, never lettered.
 - The knob assignment works as in the original's hardware-control mode: it
   is stored in the unit and takes effect after a save and a restart of the
   unit, which is why every Save to Hardware asks for the interface to be
-  switched off and on. (An earlier version followed the knob in software for
-  newly added outputs; that made the program change levels on its own, on
-  opening for instance, and was removed.)
+  switched off and on. Until then the program follows the knob itself for
+  newly blue outputs while it is open, and gives them their own level back
+  when they stop being blue or it closes.
 - Not in the original: every control is drawn solid when its setting is
   saved to hardware and as an outline when it is not, with Revert and a
   Save / Discard / Cancel question on closing.

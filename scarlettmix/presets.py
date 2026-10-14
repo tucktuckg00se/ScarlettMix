@@ -71,6 +71,11 @@ def saved_record(device: Device, model: MixModel, monitor=None) -> dict:
     if monitor is not None and monitor.available:
         preset["monitor"] = list(monitor.states)
         preset["monitor_saved"] = _monitor_summary(monitor)
+        # An output this program is moving with the knob is recorded at its
+        # own level, not wherever the knob happened to be.
+        for name, values in monitor.own_levels().items():
+            if name in preset["controls"]:
+                preset["controls"][name] = list(values)
     return preset
 
 

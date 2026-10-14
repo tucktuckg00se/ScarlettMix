@@ -115,8 +115,9 @@ class MainWindow(QMainWindow):
 
         self.tabs = QTabWidget()
         self.routing_page = OutputRoutingPanel(device)
+        self.outputs_page = OutputsPage(device)
         self._tab_pages = [(self.routing_page, "Routing"), (CaptureRoutingPanel(device), "DAW Inputs"),
-                           (OutputsPage(device), "Output Levels")]
+                           (self.outputs_page, "Output Levels")]
         if device.input_switches:
             self._tab_pages.append((InputsPage(device), "Inputs"))
         for page, title in self._tab_pages:
@@ -279,6 +280,9 @@ class MainWindow(QMainWindow):
         if self.saved is None or self.saved.record is not record:
             self.saved = Saved(self.device, record)
         saved = self.saved
+        if self.monitor_panel:
+            saved.own_levels = self.monitor.own_levels()
+            self.outputs_page.set_on_knob(self.monitor.knob_controlled())
         self.unsaved = False
         if self.mixer_page.mark(saved):
             self.unsaved = True
@@ -375,14 +379,16 @@ class MainWindow(QMainWindow):
             self._disconnected()
 
     def _poll_fast(self) -> None:
-        """Meters and front panel, ten times a second, only while visible."""
+        """Meters and front panel, ten times a second."""
         d = self.device
-        if not d or not self.isVisible() or self.isMinimized():
+        if not d:
             return
+        shown = self.isVisible() and not self.isMinimized()
         try:
-            if d.has_meters:
+            if d.has_meters and shown:
                 self.mixer_page.set_meters(d.read_meters())
-            if self.monitor_panel:
+            # The knob is still followed with the window out of sight.
+            if self.monitor_panel and (shown or self.monitor.pending()):
                 self.monitor_panel.set_status(*d.read_status())
         except AlsaError:
             self._disconnected()
@@ -443,6 +449,8 @@ class MainWindow(QMainWindow):
             return False
         self.mixer_page.model_replaced()
         if self.monitor_panel:
+            if self.monitor_panel._knob is not None:
+                self.monitor.follow(self.monitor_panel._knob)
             self.monitor_panel.sync()
         self._save_timer.start()
         self._update_saved()
@@ -575,6 +583,13 @@ class MainWindow(QMainWindow):
                 if not done and self.device:
                     ev.ignore()
                     return
+        if self.device and self.monitor_panel:
+            try:
+                # Outputs this program was moving with the knob go back to
+                # their own level; nothing will be moving them once it is gone.
+                self.monitor.stop_following()
+            except AlsaError:
+                pass
         self._save_state()
         self._teardown()
         super().closeEvent(ev)
