@@ -792,3 +792,43 @@ def test_the_knob_replaces_the_level_as_the_interface_does(xdevice):
     d.set(line34.volume, [108, 118])
     mon = Monitor(d); mon.set_state(2, BLUE); mon.set_state(3, BLUE); mon.follow(29)
     assert d.get(line34.volume) == [99, 99] and mon.own == {2: 108, 3: 118}
+
+
+# -- measuring the real mixer gains with the meters ------------------------------
+
+def test_gains_are_measured_after_a_power_cycle():
+    """The simulated unit reports 0 dB everywhere after power-on but really
+    runs its saved mix; the meters reveal the real gains."""
+    from scarlettmix.measure import free_channel, measure_gains
+    b = FakeBackend(extras=True); d = Device(b)
+    truth = {(0, 0): 128, (2, 0): 111, (1, 1): 122, (9, 7): 88, (4, 3): 134}
+    for (i, bus), cell in d.matrix_gain.items():
+        b.write(cell, [truth.get((i, bus), 0)])
+    hp = next(o for o in d.outputs if o.label == "Line 7/8")
+    d.send_mix([0, 1], hp, True)
+    b.write(hp.switch, [1, 0])
+    routes = [d.item(e) for e in d.matrix_inputs]
+    b.power_cycle(misreport=True, misreport_mutes=False)   # the patched driver reads mutes right
+    d = Device(b)
+    assert d.get(d.matrix_gain[(5, 5)]) == [128]         # the wrong reading
+    channel = free_channel(d)
+    assert channel is not None and f"PCM {channel + 1}" not in routes
+
+    def play(ch):
+        b.playing[f"PCM {ch + 1}"] = 10 ** (-12 / 20)
+        return lambda: b.playing.clear()
+
+    got = measure_gains(d, play, sleep=lambda s: None)
+    assert {k: v for k, v in got.items() if v} == truth
+    assert [d.item(e) for e in d.matrix_inputs] == routes          # routing put back
+    assert b.read(hp.switch) == [1, 0] and not b.playing           # mutes put back, tone stopped
+
+
+def test_measurement_refuses_without_a_tone():
+    import pytest as _pytest
+    from scarlettmix.measure import MeasureError, measure_gains
+    b = FakeBackend(extras=True); d = Device(b)
+    routes = [d.item(e) for e in d.matrix_inputs]
+    with _pytest.raises(MeasureError):
+        measure_gains(d, lambda ch: (lambda: None), sleep=lambda s: None)
+    assert [d.item(e) for e in d.matrix_inputs] == routes          # nothing left changed

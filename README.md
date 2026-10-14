@@ -58,6 +58,14 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   the interface off and on: its monitor knob only takes up its outputs when
   it starts. Until ScarlettMix has saved once it has nothing to compare
   with and draws everything solid.
+- **After the interface restarts**, the driver cannot read levels and mixer
+  gains back (the interface reports 0 dB until each is sent again). The
+  app then shows your last saved setup and says so. **Read mixer** in that
+  bar measures the gains the interface is really using with its own level
+  meters: a quiet test tone on a free DAW channel, about 15 seconds, with
+  the outputs that play mixes muted meanwhile and everything put back
+  afterwards. Output levels cannot be measured this way (outputs have no
+  meters).
 - **The knob and newly blue outputs**: the interface only takes a new
   output onto its monitor knob when it powers on. Until then the program
   does that job while it is open: it reads the knob and sets the level of

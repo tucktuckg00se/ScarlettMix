@@ -188,6 +188,15 @@ state, so MixControl had the same limitation and kept its own snapshots.
 The firmware images use a custom container whose processor could not be
 identified (not ARM, Blackfin or XMOS by instruction patterns).
 
+**Mixer gains can be measured with the meters.** With every mixer input
+routed off except one, fed from an otherwise unused DAW channel carrying a
+-12 dBFS tone, each mix meter divided by that channel's PCM meter is the
+input's gain into the mix. Set gains of +6, -1, -6, -17, -40 and -60 dB
+measured +6.00, -1.00, -6.00, -17.00, -40.03 and -60.25 dB; after a power
+cycle the method read the saved mix exactly while the driver reported
+0 dB in every cell. All 144 cells take about 13 seconds. ScarlettMix offers
+this as "Read mixer" (`scarlettmix/measure.py`).
+
 **Do not read mixer-unit memory registers other than 0x00–0x04 and
 0x0a–0x0c.** A GET MEM of register `0x05` (Mute, write-only) timed out and
 left the device answering every control request with -EPROTO until it was

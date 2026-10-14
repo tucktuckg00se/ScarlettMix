@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+import time
 
 from PySide6.QtCore import QSignalBlocker, QSocketNotifier, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QKeySequence
-from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QSizePolicy, QStyle,
+from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QSizePolicy, QStyle,
                                QMessageBox, QPushButton, QSplitter, QTabWidget, QVBoxLayout,
                                QWidget)
 
@@ -252,6 +253,14 @@ class MainWindow(QMainWindow):
                                     "so that it and the driver agree")
         self.sync_button.clicked.connect(self.sync_to_unit)
         self.banner.layout().addWidget(self.sync_button)
+        self.measure_button = QPushButton("Read mixer")
+        self.measure_button.setToolTip("Measure the mixer gains the interface is really using, with "
+                                       "its own level meters (about 15 seconds; outputs that play "
+                                       "mixes are muted meanwhile)")
+        self.measure_button.clicked.connect(self.read_mixer)
+        self.measure_button.setVisible(bool(self.device.has_meters))
+        self.banner.layout().insertWidget(self.banner.layout().count() - 1, self.measure_button)
+        self.banner_text = text
         if self._snapshot:
             text.setText("Interface restarted: showing your last saved setup, as levels can't "
                          "be read back.")
@@ -275,6 +284,58 @@ class MainWindow(QMainWindow):
             want = max(want, self.monitor_panel.sizeHint().height() + theme.S2 + theme.S3 + 4)
         total = sum(self._left.sizes())
         self._left.setSizes([max(1, total - want), want])
+
+    def read_mixer(self) -> None:
+        """Measure the real mixer gains with the meters and show them."""
+        from ..measure import MeasureError, measure_gains, pipewire_player, simulated_player
+        if QMessageBox.question(
+                self, "Read mixer",
+                "Measure the mixer from the interface?\n\nA quiet test tone is played on a free "
+                "DAW channel for about 15 seconds. Outputs that play mixes (such as the headphones) "
+                "are muted meanwhile; everything is put back afterwards.") != QMessageBox.Yes:
+            return
+        backend = self.device.backend
+        try:
+            play = simulated_player(backend) if backend.simulated else pipewire_player(backend.card)
+        except MeasureError as err:
+            QMessageBox.warning(self, "Read mixer", f"Cannot measure the mixer:\n{err}")
+            return
+
+        def wait(seconds: float) -> None:           # keep the window responsive
+            end = time.monotonic() + seconds
+            while time.monotonic() < end:
+                QApplication.processEvents()
+                time.sleep(0.02)
+
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self.statusBar().showMessage("Measuring the mixer\u2026")
+        self.mixer_page._applying = True
+        try:
+            levels = measure_gains(self.device, play, sleep=wait)
+        except MeasureError as err:
+            QMessageBox.warning(self, "Read mixer", f"Could not measure the mixer:\n{err}")
+            return
+        except AlsaError:
+            self._disconnected()
+            return
+        finally:
+            self.mixer_page._applying = False
+            QApplication.restoreOverrideCursor()
+            self.statusBar().clearMessage()
+        for key, level in levels.items():
+            self.device.believe(self.device.matrix_gain[key], [level])
+        # Keep the saved mixer layout (stereo pairs, pans) if it is exactly what
+        # was measured; otherwise show the measured gains as they are.
+        saved = self._snapshot.get("mixer") if self._snapshot else None
+        if not (saved and self.controller.in_sync()):
+            self.controller.adopt_hardware()
+        self.mixer_page.model_replaced()
+        self.banner_text.setText("Interface restarted: mixer read from the interface; output "
+                                 "levels show your last saved setup.")
+        self.measure_button.hide()
+        self.device.poll_events()               # the restored mutes and routing, before comparing
+        self._update_saved()
+        self.statusBar().showMessage("Mixer measured from the interface.", 6000)
 
     def _show_corner(self, index: int) -> None:
         for i, button in enumerate(self._corners):

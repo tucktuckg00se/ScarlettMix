@@ -127,6 +127,11 @@ class FakeBackend(Backend):
         self._values = {int(k): list(v) for k, v in data["values"].items()}
         self.writes: list[tuple[str, list[int]]] = []
         self.on_write: Callable[[ElemInfo, list[int]], None] | None = None
+        # What the simulated unit is really doing, which after a power cycle
+        # differs from what it reports (see power_cycle), and test signals
+        # playing on DAW channels ({"PCM 7": linear amplitude}) for the meters.
+        self.true_gains: dict[int, int] = {}
+        self.playing: dict[str, float] = {}
         if extras:
             numid = max(e.numid for e in self._elems)
             for name, kind, count, hi, writable, start in (
@@ -159,7 +164,30 @@ class FakeBackend(Backend):
         return list(self._elems)
 
     def read(self, e):
+        if e.name == "PCM Level Meter" and self.playing:
+            return [min(65535, round(self.playing.get(f"PCM {i + 1}", 0.0) * 65535))
+                    for i in range(e.count)]
+        if e.name == "Mix Level Meter" and self.playing:
+            return self._mix_meters(e.count)
         return list(self._values[e.numid])
+
+    def _mix_meters(self, count: int) -> list[int]:
+        """Peak of each mix bus from the test signals, the routing and the
+        gains the unit is really using."""
+        routes = {e.name.split(" Input")[0]: e for e in self._elems if e.name.endswith("Input Playback Route")}
+        out = []
+        for bus in range(count):
+            total = 0.0
+            for prefix, route in routes.items():
+                source = route.items[self._values[route.numid][0]]
+                amp = self.playing.get(source, 0.0)
+                cell = next((c for c in self._elems
+                             if c.name == f"{prefix} Mix {chr(ord('A') + bus)} Playback Volume"), None)
+                if amp and cell:
+                    level = self.true_gains.get(cell.numid, self._values[cell.numid][0])
+                    total += amp * 10 ** ((level - 128) / 20) if level else 0.0
+            out.append(min(65535, round(total * 65535)))
+        return out
 
     def write(self, e, values):
         if not e.writable:
@@ -174,6 +202,7 @@ class FakeBackend(Backend):
                 v = max(e.min, min(e.max, int(v)))
             vals.append(v)
         self._values[e.numid] = vals
+        self.true_gains.pop(e.numid, None)          # what is sent is what it uses
         self.writes.append((e.name, vals))
         if e.name == "Save To HW":                       # a trigger: reads back as off
             self.saves += vals[0]
@@ -191,7 +220,7 @@ class FakeBackend(Backend):
     def connection_id(self):
         return f"sim/{self.connection}"
 
-    def power_cycle(self, misreport: bool = False) -> None:
+    def power_cycle(self, misreport: bool = False, misreport_mutes: bool = True) -> None:
         """The unit restarts: new connection, masks as last saved. With
         ``misreport`` the driver then reads levels the way a real one does
         after power-on: every gain and level 0 dB, every switch muted."""
@@ -201,8 +230,11 @@ class FakeBackend(Backend):
         if misreport:
             for e in self._elems:
                 if e.writable and e.name.endswith("Playback Volume"):
+                    if e.count == 1:          # what it really uses survives; reports do not
+                        self.true_gains.setdefault(e.numid, self._values[e.numid][0])
                     self._values[e.numid] = [128] * e.count
-                elif e.writable and e.name.endswith("Playback Switch"):
+                elif misreport_mutes and e.writable and e.name.endswith("Playback Switch"):
+                    # the stock driver's two-byte mute read (fixed in the patch)
                     self._values[e.numid] = [0] * e.count
 
 
