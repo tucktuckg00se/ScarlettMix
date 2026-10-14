@@ -12,8 +12,7 @@ KO=sound/usb/snd-usb-audio.ko
 [ "$(modinfo -F vermagic "$KO" | cut -d' ' -f1)" = "$(uname -r)" ] || {
     echo "test module was built for another kernel than $(uname -r); rebuild first"; exit 1; }
 
-echo "Stopping the ScarlettMix service and PipeWire (audio stops for a few seconds)..."
-systemctl --user stop scarlettmix.service 2>/dev/null || true
+echo "Stopping PipeWire (audio stops for a few seconds)..."
 systemctl --user stop pipewire.socket pipewire-pulse.socket 2>/dev/null || true
 systemctl --user stop wireplumber.service pipewire-pulse.service pipewire.service 2>/dev/null || true
 sleep 1
@@ -50,5 +49,4 @@ if [ "$loaded" = "$(modinfo -F srcversion "$KO")" ]; then
 else
     echo "Unexpected: loaded driver srcversion $loaded is not the test build."
 fi
-systemctl --user start scarlettmix.service 2>/dev/null || true
-echo "ScarlettMix service: $(systemctl --user is-active scarlettmix.service). Run ./revert.sh to go back to the stock driver."
+echo "Run ./revert.sh to go back to the stock driver."

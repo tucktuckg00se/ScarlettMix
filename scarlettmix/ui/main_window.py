@@ -281,7 +281,6 @@ class MainWindow(QMainWindow):
         if self.device and not self.device.backend.simulated:
             try:
                 presets.save_state(self.device, self.controller.model)
-                presets.save_last(self.device)
             except OSError as err:
                 self.statusBar().showMessage(f"Could not save mixer layout: {err}", 8000)
 

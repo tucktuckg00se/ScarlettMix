@@ -58,16 +58,7 @@ def main(argv=None) -> int:
     ap.add_argument("--status", action="store_true", help="print the device's current setup and exit")
     ap.add_argument("--load", metavar="FILE", help="apply a preset (or MixControl snapshot) and exit")
     ap.add_argument("--save", metavar="FILE", help="write the device's current setup to a preset and exit")
-    ap.add_argument("--daemon", action="store_true",
-                    help="run in the background: remember every change and restore the "
-                         "setup whenever the interface appears")
-    ap.add_argument("--restore", action="store_true",
-                    help="reapply the remembered setup once and exit")
     args = ap.parse_args(argv)
-
-    if args.daemon:
-        from . import daemon
-        return daemon.run()
 
     try:
         backend = open_backend(args)
@@ -75,7 +66,7 @@ def main(argv=None) -> int:
         print(f"scarlettmix: {err}", file=sys.stderr)
         return 1
 
-    if args.status or args.load or args.save or args.restore:
+    if args.status or args.load or args.save:
         if backend is None:
             print("scarlettmix: no supported Scarlett found "
                   f"({', '.join(SUPPORTED_USB_IDS.values())})", file=sys.stderr)
@@ -84,16 +75,10 @@ def main(argv=None) -> int:
         if args.load:
             controller = MixController(device)
             preset, notes = presets.load_file(args.load, device)
-            notes += presets.apply(preset, device, controller)
+            notes += presets.apply(preset, device, controller, force=True)
             if not backend.simulated:
                 presets.save_state(device, controller.model)
             for n in notes:
-                print(f"note: {n}", file=sys.stderr)
-        if args.restore:
-            notes = presets.restore_last(device, force=True)
-            if notes is None:
-                print("scarlettmix: no saved session to restore", file=sys.stderr)
-            for n in notes or []:
                 print(f"note: {n}", file=sys.stderr)
         if args.save:
             saved = None if backend.simulated else presets.load_state(device)

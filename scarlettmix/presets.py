@@ -45,32 +45,6 @@ def save_state(device: Device, model: MixModel) -> None:
     os.replace(tmp, state_path(device))
 
 
-def last_path(device: Device) -> str:
-    return os.path.join(config_dir(), f"last-{device.backend.usb_id.replace(':', '-')}.json")
-
-
-def save_last(device: Device) -> None:
-    """Remember the interface's complete state, so it can be put back after a
-    power cycle. This is hardware state only (the gain grid as raw levels);
-    how the mixer window presents it is kept separately by save_state."""
-    os.makedirs(config_dir(), exist_ok=True)
-    tmp = last_path(device) + ".tmp"
-    with open(tmp, "w") as f:
-        json.dump(snapshot(device, None, "last session"), f)
-    os.replace(tmp, last_path(device))
-
-
-def restore_last(device: Device, controller: MixController | None = None,
-                 force: bool = False) -> list[str] | None:
-    """Reapply the remembered setup. Returns None if there is none."""
-    try:
-        with open(last_path(device)) as f:
-            preset = json.load(f)
-    except (OSError, ValueError):
-        return None
-    return apply(preset, device, controller, force)
-
-
 def _preset_controls(device: Device):
     """Controls a preset carries, apart from the gain matrix (the mixer view owns that)."""
     elems = list(device.matrix_inputs) + list(device.capture)

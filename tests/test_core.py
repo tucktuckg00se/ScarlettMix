@@ -250,25 +250,6 @@ def test_state_file_location(device, tmp_path, monkeypatch):
     assert presets.load_state(device) == c.model.to_dict()
 
 
-def test_restore_last_session(device, tmp_path, monkeypatch):
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    c = MixController(device)
-    assert presets.restore_last(device, c) is None      # nothing remembered yet
-    c.model.set_pair_stereo(1, True)
-    c.model.mix_for_bus(2).strips[5].db = -3.0
-    c.apply()
-    device.set_item(device.outputs[2].source_l, "Mix C")
-    presets.save_last(device)
-
-    fresh = Device(FakeBackend())                       # as after a power cycle
-    assert presets.restore_last(fresh) == []            # needs no mixer view
-    assert fresh.item(fresh.outputs[2].source_l) == "Mix C"
-    assert fresh.matrix_levels() == device.matrix_levels()
-    n = len(fresh.backend.writes)
-    assert presets.restore_last(fresh) == [] and len(fresh.backend.writes) == n  # idempotent
-    # The window's own view is adopted again because it still matches the hardware.
-    assert MixController(fresh, c.model.to_dict()).restored
-
 
 def test_original_names(device):
     from scarlettmix import names
@@ -369,67 +350,9 @@ def test_default_snapshot_imports_daw_pair_as_stereo_channel(device):
     assert c.model.mix_for_bus(0).strips[16].pan == 0.5
 
 
-class _Clock:
-    def __init__(self): self.t = 0.0
-    def __call__(self): return self.t
 
 
-def _external_change(dev, elem, values):
-    """Simulate another program changing a control."""
-    dev.backend._values[elem.numid] = values
-    dev.backend.drain_events = lambda: ({elem.numid}, False)
 
-
-def test_daemon_restores_before_recording(tmp_path, monkeypatch):
-    from scarlettmix import daemon
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    first = Device(FakeBackend())
-    first.set_item(first.outputs[1].source_l, "Mix C")
-    first.set(first.matrix_gain[(6, 2)], [120])
-    presets.save_last(first)
-
-    clock = _Clock()
-    s = daemon.Session(FakeBackend(), clock)            # interface back at its old state
-    assert s.device.item(s.device.outputs[1].source_l) != "Mix C"
-    s.start()
-    assert s.device.item(s.device.outputs[1].source_l) == "Mix C"
-    assert s.device.get(s.device.matrix_gain[(6, 2)]) == [120]
-    assert s._dirty_since is None                        # its own restore is not a "change"
-
-
-def test_daemon_records_changes_after_they_settle(tmp_path, monkeypatch):
-    import json
-    from scarlettmix import daemon
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    clock = _Clock()
-    s = daemon.Session(FakeBackend(), clock)
-    s.start()                                            # nothing remembered: saves current
-    path = presets.last_path(s.device)
-    vol = s.device.outputs[0].volume
-    assert json.load(open(path))["controls"][vol.name] != [90, 90]
-
-    _external_change(s.device, vol, [90, 90])
-    assert s.step(0) is True
-    assert json.load(open(path))["controls"][vol.name] != [90, 90]   # still settling
-    s.device.backend.drain_events = lambda: (set(), False)
-    clock.t += daemon.SETTLE_SECONDS + 0.1
-    assert s.step(0) is True
-    assert json.load(open(path))["controls"][vol.name] == [90, 90]
-
-
-def test_daemon_notices_removal_and_saves_pending(tmp_path, monkeypatch):
-    import json
-    from scarlettmix import daemon
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    s = daemon.Session(FakeBackend(), _Clock())
-    s.start()
-    cell = s.device.matrix_gain[(3, 3)]
-    _external_change(s.device, cell, [77])
-    assert s.step(0) is True
-    s.device.backend.drain_events = lambda: (set(), True)
-    assert s.step(0) is False
-    s.close()                                            # pending change is not lost
-    assert json.load(open(presets.last_path(s.device)))["matrix"][cell.name] == 77
 
 
 def test_preset_with_mixer_view_applies_without_a_controller(device):
@@ -536,42 +459,6 @@ def test_monitor_follow_skips_first_pair(xdevice):
     assert xdevice.get(by_label["Line 9/10"].volume) == [1, 1]
 
 
-def test_daemon_follows_the_knob(tmp_path, monkeypatch):
-    from scarlettmix import daemon
-    from scarlettmix.monitor import BLUE, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    setup = Monitor(Device(FakeBackend(extras=True)))
-    setup.states[8] = setup.states[9] = BLUE         # headphones 2 follow the monitor section
-    setup.save()
-
-    s = daemon.Session(FakeBackend(extras=True), _Clock())
-    s.start()
-    d = s.device
-    hp2 = next(o for o in d.outputs if o.label == "Line 9/10")
-    assert s.monitor.states[8] == "silver"           # the unit, not our note, says what is blue
-    s.monitor.states[8] = s.monitor.states[9] = BLUE; s.monitor.apply()
-    assert d.get(d.hw_masks[1]) == [0b1100000011]
-    assert s.step(0) and d.get(hp2.volume) == [128 - 30, 128 - 30]   # knob at -30 in the simulator
-    d.backend._values[d.hw_status.numid][0] = 52     # knob turned down
-    assert s.step(0) and d.get(hp2.volume) == [76, 76]
-    n = len(d.backend.writes)
-    assert s.step(0) and len(d.backend.writes) == n  # knob still: nothing sent
-
-    setup.states[9] = "silver"                       # the app changes a button
-    import os, time
-    setup.save(); os.utime(setup.path(), (time.time() + 5, time.time() + 5))
-    d.backend._values[d.hw_status.numid][0] = 60
-    assert s.step(0)
-    assert d.get(hp2.volume) == [68, 128] and d.get(d.hw_masks[1]) == [0b0100000011]
-    assert d.get(d.hw_masks[0]) == [0b11]
-
-
-def test_daemon_without_extras_never_polls(tmp_path, monkeypatch):
-    from scarlettmix import daemon
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    s = daemon.Session(FakeBackend(), _Clock())
-    s.start()
-    assert not s.monitor.available and s.step(0) and s.device.backend.writes == []
 
 
 def test_output_gets_its_level_back_when_it_stops_following(xdevice, tmp_path, monkeypatch):

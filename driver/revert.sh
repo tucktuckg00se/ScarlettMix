@@ -7,7 +7,6 @@ BUILD="${SCARLETT_BUILD_DIR:-$HERE/../../kernel}"
 cd "$BUILD" 2>/dev/null || { echo "no build directory at $BUILD; run driver/build.sh first"; exit 1; }
 
 echo "Stopping PipeWire (audio stops for a few seconds)..."
-systemctl --user stop scarlettmix.service 2>/dev/null || true
 systemctl --user stop pipewire.socket pipewire-pulse.socket 2>/dev/null || true
 systemctl --user stop wireplumber.service pipewire-pulse.service pipewire.service 2>/dev/null || true
 sleep 1
@@ -22,7 +21,6 @@ sudo sh -c '
 systemctl --user start pipewire.socket pipewire-pulse.socket 2>/dev/null || true
 systemctl --user start pipewire.service wireplumber.service pipewire-pulse.service 2>/dev/null || true
 sleep 2
-systemctl --user start scarlettmix.service 2>/dev/null || true
 
 loaded=$(cat /sys/module/snd_usb_audio/srcversion 2>/dev/null || echo none)
 if [ "$loaded" = "$(modinfo -F srcversion snd-usb-audio)" ]; then
@@ -30,4 +28,3 @@ if [ "$loaded" = "$(modinfo -F srcversion snd-usb-audio)" ]; then
 else
     echo "Loaded driver srcversion $loaded does not match the stock one; reboot to be sure."
 fi
-echo "ScarlettMix service: $(systemctl --user is-active scarlettmix.service)"
