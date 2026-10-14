@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLa
 from .. import names
 from ..device import Device
 from ..mixer import Mix, MixController
-from .widgets import MUTE_COLOR, SOLO_COLOR, Fader, FitScrollArea, ItemCombo, ToggleButton, fmt_db
+from .widgets import (MUTE_COLOR, SOLO_COLOR, Fader, FitScrollArea, ItemCombo, MarkCheckBox,
+                      MarkSlider, ToggleButton, fmt_db)
 
 STRIP_WIDTH = 92
 
@@ -61,7 +62,7 @@ class ChannelStrip(QFrame):
             self.sources.append(combo)
         lay.addLayout(sources)
 
-        self.pan = QSlider(Qt.Horizontal)
+        self.pan = MarkSlider(Qt.Horizontal)
         self.pan.setRange(-50, 50)
         self.pan.setPageStep(10)
         self.pan.setAccessibleName(f"Input {label} " + ("balance" if self.linked else "pan"))
@@ -129,6 +130,18 @@ class ChannelStrip(QFrame):
         self.mute.setChecked(strip.mute)
         self.solo.setChecked(strip.solo)
         self._strip = strip
+
+    def mark(self, saved, model, mix: Mix) -> None:
+        """Outline the controls whose setting is not saved to hardware."""
+        for combo, route in zip(self.sources, self.routes):
+            combo.setUnsaved(saved.control(route))
+        changed = saved.strip(mix, self.index, self.indices)
+        self.fader.setUnsaved(changed["fader"])
+        self.pan.setUnsaved(changed["pan"])
+        self.mute.setUnsaved(changed["mute"])
+        self.solo.setUnsaved(changed["solo"])
+        if self.link:
+            self.link.setUnsaved(saved.link(model, self.index // 2))
 
     def set_meters(self, meters: dict[str, list[float]]) -> None:
         """Show the level of whatever source feeds each of this strip's inputs."""
@@ -242,6 +255,11 @@ class MasterStrip(QFrame):
         self.mute.setChecked(mix.master_mute)
         self._mix = mix
 
+    def mark(self, saved, mix: Mix) -> None:
+        changed = saved.master(mix)
+        self.fader.setUnsaved(changed["fader"])
+        self.mute.setUnsaved(changed["mute"])
+
     def sync_send(self) -> None:
         """Tick the outputs this mix is playing on and summarise them on the button."""
         on, short = [], []
@@ -282,6 +300,7 @@ class MixerPage(QWidget):
         self.controller = controller
         self._applying = False
         self._current_bus = 0
+        self._saved = None
         self._gain_ids = {e.numid for e in device.matrix_gain.values()}
         self._route_ids = {e.numid: i for i, e in enumerate(device.matrix_inputs)}
 
@@ -294,7 +313,7 @@ class MixerPage(QWidget):
         self._group.setExclusive(True)
         top.addLayout(self._selector_box)
         top.addSpacing(16)
-        self.stereo = QCheckBox("Stereo mix")
+        self.stereo = MarkCheckBox("Stereo mix")
         self.stereo.setToolTip("Link this mix with its neighbour as a left/right pair with pan controls")
         self.stereo.toggled.connect(self._stereo_toggled)
         top.addWidget(self.stereo)
@@ -360,8 +379,10 @@ class MixerPage(QWidget):
             b.deleteLater()
         model = self.controller.model
         current = self.current_mix()
+        self._mix_buttons = []
         for mix in model.mixes:
             b = QPushButton(names.mix(mix.buses))
+            self._mix_buttons.append((b, mix))
             b.setCheckable(True)
             b.setChecked(mix is current)
             b.clicked.connect(lambda _=False, bus=mix.buses[0]: self.select(bus))
@@ -387,6 +408,26 @@ class MixerPage(QWidget):
             self.stereo.setChecked(mix.stereo)
         self.stereo.setEnabled(has_partner)
         self._update_dests()
+        if self._saved:
+            self.mark(self._saved)
+
+    def mark(self, saved) -> bool:
+        """Outline what is not saved to hardware, in the mix shown; a dot on
+        the selector of every mix that holds something unsaved. True if any does."""
+        self._saved = saved
+        model, mix = self.controller.model, self.current_mix()
+        for s in self.strips:
+            s.mark(saved, model, mix)
+        self.master.mark(saved, mix)
+        self.stereo.setUnsaved(saved.mix_shape(mix))
+        found = False
+        for b, m in getattr(self, "_mix_buttons", []):
+            changed = saved.mix(m) or saved.mix_shape(m)
+            b.setText(names.mix(m.buses) + (" \u25cf" if changed else ""))
+            found = found or changed
+        routes = any(saved.control(e) for e in self.device.matrix_inputs)
+        links = any(saved.link(model, p) for p in range(self.device.n_inputs // 2))
+        return found or routes or links
 
     def set_meters(self, meters: dict[str, list[float]]) -> None:
         for strip in self.strips:

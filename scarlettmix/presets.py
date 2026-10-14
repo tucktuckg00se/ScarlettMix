@@ -65,6 +65,9 @@ def save_saved(device: Device, model: MixModel, monitor=None) -> None:
 def saved_record(device: Device, model: MixModel, monitor=None) -> dict:
     """Everything Save to Hardware stores, as the interface has it now."""
     preset = snapshot(device, model, "saved to hardware")
+    # Which connection of the interface this was saved in: until it changes,
+    # the interface has not been switched off and on since.
+    preset["connection"] = device.backend.connection_id()
     if monitor is not None and monitor.available:
         preset["monitor"] = list(monitor.states)
         preset["monitor_saved"] = _monitor_summary(monitor)
@@ -73,33 +76,6 @@ def saved_record(device: Device, model: MixModel, monitor=None) -> dict:
 
 def _monitor_summary(monitor) -> dict:
     return {"group": monitor.group, "mono": monitor.mono, "pad": monitor.pad}
-
-
-def differs_from_saved(device: Device, saved: dict | None, monitor=None) -> bool | None:
-    """Whether the running setup differs from what was last saved to the
-    interface. None if there is no record to compare with."""
-    if not saved:
-        return None
-    for e in _preset_controls(device):
-        was = saved.get("controls", {}).get(e.name)
-        values = device.get(e)
-        now = [e.items[v] for v in values] if e.type == TYPE_ENUMERATED else values
-        if was is not None and was != now:
-            return True
-    try:
-        if "mixer" in saved:
-            model = MixModel.from_dict(saved["mixer"], device.n_inputs, device.n_mixes)
-            gains = {device.matrix_gain[k].name: v for k, v in model.target_levels().items()}
-        else:
-            gains = saved.get("matrix", {})
-    except (ValueError, KeyError, TypeError):
-        gains = {}
-    for e in device.matrix_gain.values():
-        if e.name in gains and device.get(e)[0] != gains[e.name]:
-            return True
-    if monitor is not None and monitor.available and "monitor_saved" in saved:
-        return saved["monitor_saved"] != _monitor_summary(monitor)
-    return False
 
 
 def load_saved(device: Device) -> dict | None:

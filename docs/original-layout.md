@@ -80,8 +80,11 @@ Mixes are numbered, never lettered.
 - Also with the patched driver: Mono, Pad and the Monitor Preset menu.
 - The knob assignment works as in the original's hardware-control mode: it
   is stored in the unit and takes effect after a save and a restart of the
-  unit. In between, a newly added output is drawn as a blue outline: Mute
-  and Dim act on it, the knob does not yet. (An earlier version followed
-  the knob in software for such outputs; that made the program change levels
-  on its own, on opening for instance, and was removed.)
+  unit, which is why every Save to Hardware asks for the interface to be
+  switched off and on. (An earlier version followed the knob in software for
+  newly added outputs; that made the program change levels on its own, on
+  opening for instance, and was removed.)
+- Not in the original: every control is drawn solid when its setting is
+  saved to hardware and as an outline when it is not, with Revert and a
+  Save / Discard / Cancel question on closing.
 - Not present: PFL and an on-screen monitor knob (the knob position is shown).

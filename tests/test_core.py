@@ -484,16 +484,20 @@ def test_saved_snapshot_is_only_what_was_saved(device, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert presets.load_saved(device) is None
     c = MixController(device)
+    from scarlettmix.saved import Saved
     presets.save_saved(device, c.model)
-    assert presets.differs_from_saved(device, None) is None
+    assert not Saved(device, None).known and not Saved(device, None).any()
     snap = presets.load_saved(device)
-    assert presets.differs_from_saved(device, snap) is False
-    device.set(device.outputs[0].volume, [90, 90])       # changed afterwards, not saved
-    assert presets.load_saved(device)["controls"][device.outputs[0].volume.name] != [90, 90]
-    assert presets.differs_from_saved(device, snap) is True
-    device.set(device.outputs[0].volume, snap["controls"][device.outputs[0].volume.name])
+    saved = Saved(device, snap)
+    vol = device.outputs[0].volume
+    assert saved.known and not saved.any() and not saved.control(vol)
+    device.set(vol, [90, 90])                            # changed afterwards, not saved
+    assert presets.load_saved(device)["controls"][vol.name] != [90, 90]
+    assert saved.any() and saved.control(vol) and not saved.control(device.outputs[1].volume)
+    device.set(vol, snap["controls"][vol.name])
+    assert not saved.any()
     device.set(device.matrix_gain[(5, 3)], [100])        # a mixer gain counts too
-    assert presets.differs_from_saved(device, snap) is True
+    assert saved.any() and saved.cell(5, 3) and not saved.cell(5, 2)
 
 
 def test_real_connection_identity_parts(monkeypatch):
@@ -605,10 +609,13 @@ def test_unreadable_mutes_are_not_drawn_red(tmp_path):
 def test_saved_indicator_follows_the_monitor_group(xdevice):
     from scarlettmix.monitor import BLUE, Monitor
     mon = Monitor(xdevice); c = MixController(xdevice)
-    record = presets.saved_record(xdevice, c.model, mon)
-    assert presets.differs_from_saved(xdevice, record, mon) is False
+    from scarlettmix.saved import Saved
+    saved = Saved(xdevice, presets.saved_record(xdevice, c.model, mon))
+    assert not saved.any(mon) and saved.monitor(mon) == [False] * 10
     mon.set_state(4, BLUE)
-    assert presets.differs_from_saved(xdevice, record, mon) is True
+    assert saved.any(mon) and saved.monitor(mon) == [False] * 4 + [True] + [False] * 5
+    mon.set_mono(True)
+    assert saved.mono(mon) and not saved.pad(mon)
 
 
 def test_a_click_never_acts_on_what_is_shown_for_other_outputs():
@@ -640,3 +647,49 @@ def test_prepare_marks_a_fresh_unit_untrusted(tmp_path):
     presets.mark_synced(d)
     d2 = Device(b)
     assert presets.prepare(d2) is None and not d2.untrusted
+
+
+# -- saved or not, for every control ----------------------------------------------
+
+def test_strip_marks_and_revert(xdevice):
+    """Each kind of mixer change is reported for its own control only, and
+    revert puts the interface back to exactly what was saved."""
+    from scarlettmix.monitor import BLUE, RED, Monitor
+    from scarlettmix.saved import Saved
+    d = xdevice
+    c = MixController(d); mon = Monitor(d)
+    saved = Saved(d, presets.saved_record(d, c.model, mon))
+    before = {e.numid: d.get(e) for e in d.elements if e.writable}
+    mix = c.model.mix_for_bus(0)
+    assert saved.strip(mix, 0, [0]) == {"fader": False, "pan": False, "mute": False, "solo": False}
+
+    mix.strips[0].db = -12.0; c.apply(mix)
+    assert saved.strip(mix, 0, [0])["fader"] and not saved.strip(mix, 1, [1])["fader"]
+    assert saved.mix(mix) and not saved.mix(c.model.mix_for_bus(3))
+    mix.strips[1].mute = True; mix.master_db = -3.0; c.apply(mix)
+    assert saved.strip(mix, 1, [1]) == {"fader": False, "pan": False, "mute": True, "solo": False}
+    assert saved.master(mix) == {"fader": True, "mute": False}
+    c.model.set_inputs_stereo(2, True); c.apply()
+    assert saved.link(c.model, 2) and not saved.link(c.model, 1)
+    c.model.set_pair_stereo(1, True); c.apply()
+    assert saved.mix_shape(c.model.mix_for_bus(2)) and not saved.mix_shape(mix)
+
+    out = d.outputs[1]
+    d.set(out.volume, [100, 100]); d.set_item(out.source_l, "Mix A"); d.set(d.master_switch, [0])
+    mon.set_state(4, BLUE); mon.set_state(8, RED); mon.set_pad(True)
+    assert saved.any(mon)
+
+    assert saved.revert(c, mon) == []
+    assert not saved.any(mon) and saved.monitor(mon) == [False] * 10
+    assert {e.numid: d.get(e) for e in d.elements if e.writable} == before
+    assert not c.model.stereo_inputs and not c.model.mix_for_bus(2).stereo
+
+
+def test_saved_record_knows_its_connection():
+    from scarlettmix.saved import Saved
+    b = FakeBackend(extras=True); d = Device(b)
+    record = presets.saved_record(d, MixController(d).model)
+    assert record["connection"] == b.connection_id()
+    b.power_cycle()
+    assert record["connection"] != b.connection_id()     # it has been restarted since
+    assert Saved(d, record).known

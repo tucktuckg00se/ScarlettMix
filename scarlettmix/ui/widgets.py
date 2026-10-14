@@ -4,12 +4,48 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
-from PySide6.QtWidgets import QComboBox, QFrame, QPushButton, QScrollArea, QSizePolicy, QWidget
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QPushButton, QScrollArea,
+                               QSizePolicy, QSlider, QWidget)
 
 from .. import laws, names
 
 MUTE_COLOR = "#d9534f"
 SOLO_COLOR = "#e0a800"
+# Not saved to hardware: drawn as an outline. Saved: drawn solid.
+UNSAVED_COLOR = "#c77700"
+UNSAVED_TIP = "Not saved to hardware: lost when the interface is switched off."
+
+
+class Outlined:
+    """Mix-in for stock widgets: an outline around the widget marks a value
+    that is not saved to hardware."""
+
+    _unsaved = False
+
+    def setUnsaved(self, on: bool) -> None:
+        if on != self._unsaved:
+            self._unsaved = on
+            self.update()
+
+    def unsaved(self) -> bool:
+        return self._unsaved
+
+    def paintEvent(self, ev) -> None:
+        super().paintEvent(ev)
+        if self._unsaved:
+            p = QPainter(self)
+            p.setRenderHint(QPainter.Antialiasing)
+            p.setPen(QPen(QColor(UNSAVED_COLOR), 2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 3, 3)
+
+
+class MarkSlider(Outlined, QSlider):
+    pass
+
+
+class MarkCheckBox(Outlined, QCheckBox):
+    pass
 
 
 def fmt_db(db: float) -> str:
@@ -42,6 +78,7 @@ class Fader(QWidget):
         # Optional level meter beside the groove: up to ``meters`` bars.
         self._meter_w = 6.0 * meters + (2.0 if meters else 0.0)
         self._levels: list[float] = []
+        self._unsaved = False
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.setMinimumHeight(170)
@@ -54,6 +91,15 @@ class Fader(QWidget):
 
     def db(self) -> float:
         return self._db
+
+    def setUnsaved(self, on: bool) -> None:
+        """Draw the handle and bar hollow: this level is not saved to hardware."""
+        if on != self._unsaved:
+            self._unsaved = on
+            self.update()
+
+    def unsaved(self) -> bool:
+        return self._unsaved
 
     METER_FLOOR = -60.0
 
@@ -174,8 +220,14 @@ class Fader(QWidget):
             p.setBrush(faint)
 
         handle_y = self._y_for(self._db)
-        p.setBrush(accent)
-        p.drawRoundedRect(QRectF(groove_x - 2, handle_y, 4, bottom - handle_y), 2, 2)
+        if self._unsaved:
+            p.setPen(QPen(accent, 1))
+            p.setBrush(pal.color(group, QPalette.Window))
+            p.drawRoundedRect(QRectF(groove_x - 2.5, handle_y, 5, bottom - handle_y), 2, 2)
+            p.setPen(Qt.NoPen)
+        else:
+            p.setBrush(accent)
+            p.drawRoundedRect(QRectF(groove_x - 2, handle_y, 4, bottom - handle_y), 2, 2)
 
         font = self.font()
         font.setPointSizeF(max(6.5, font.pointSizeF() * 0.78))
@@ -200,8 +252,12 @@ class Fader(QWidget):
             p.drawText(QPointF(groove_x + 16, bottom + fm.ascent() / 2 - 1), "∞")
 
         handle = QRectF(groove_x - 11, handle_y - self.HANDLE_H / 2, 22, self.HANDLE_H)
-        p.setPen(QPen(pal.color(group, QPalette.Mid), 1))
-        p.setBrush(pal.color(group, QPalette.Button))
+        if self._unsaved:
+            p.setPen(QPen(accent, 2))
+            p.setBrush(pal.color(group, QPalette.Window))
+        else:
+            p.setPen(QPen(pal.color(group, QPalette.Mid), 1))
+            p.setBrush(pal.color(group, QPalette.Button))
         p.drawRoundedRect(handle, 4, 4)
         p.setPen(QPen(accent if self.hasFocus() else text, 2))
         p.drawLine(QPointF(handle.left() + 4, handle_y), QPointF(handle.right() - 4, handle_y))
@@ -216,11 +272,33 @@ class ToggleButton(QPushButton):
         self.setToolTip(tooltip)
         self.setAccessibleName(tooltip or text)
         self.setFixedHeight(24)
-        self.setStyleSheet(
-            f"QPushButton:checked {{ background-color: {color}; color: #111; font-weight: bold; }}")
+        # Same width whether drawn solid or as an outline (the two styles have
+        # different natural sizes): share the row equally instead.
+        self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
+        self.setMinimumWidth(26)
+        self._color, self._unsaved = color, None
+        self.setUnsaved(False)
+
+    def setUnsaved(self, on: bool) -> None:
+        """Outline instead of fill: this setting is not saved to hardware."""
+        if on == self._unsaved:
+            return
+        self._unsaved = on
+        c = self._color
+        if on:
+            self.setStyleSheet(
+                "QPushButton { background-color: transparent; border: 2px solid #888;"
+                " border-radius: 4px; }"
+                f"QPushButton:checked {{ border: 2px solid {c}; color: {c}; font-weight: bold; }}")
+        else:
+            self.setStyleSheet(
+                f"QPushButton:checked {{ background-color: {c}; color: #111; font-weight: bold; }}")
+
+    def unsaved(self) -> bool:
+        return bool(self._unsaved)
 
 
-class ItemCombo(QComboBox):
+class ItemCombo(Outlined, QComboBox):
     """Combo box for an enumerated control; ignores the wheel unless focused,
     so scrolling a page never changes routing by accident."""
 

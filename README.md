@@ -42,16 +42,22 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   for DAW capture channels.
 - **Levels**: master in the monitor section, per-pair level and mute on a tab.
 - **With the patched driver**: level meters beside the faders; File ▸ Save to
-  Hardware; and the monitor section's Dim, Mute and ten output buttons. The
-  buttons are drawn from the interface and nothing else: blue means its
-  knob, Mute and Dim control that output; silver is independent; red is
-  muted. Each click moves to the next state. Mute and Dim take an output on
-  at once. The knob takes one on only when the interface powers on, so a
-  newly added output is drawn as a blue outline until you Save to Hardware
-  and switch the interface off and on. The program never moves an output's
-  level by itself, and opening or closing it sends nothing.
-  The top bar says whether the running setup is what the interface has
-  stored ("Saved in the interface" / "Changed since last save").
+  Hardware; and the monitor section's Dim, Mute and ten output buttons:
+  blue is in the monitor group (the knob, Mute and Dim control it), silver
+  is independent, red is muted. Each click moves to the next state.
+- **Saved or not** (with the patched driver): one rule for every control.
+  Solid means saved to hardware. An outline (a hollow fader, an outlined
+  button or drop-down) means changed and not saved: it is lost when the
+  interface is switched off. A dot on a mix or tab says something inside is
+  unsaved, and the top bar says "Saved to hardware" or "Not saved".
+  **Revert** puts the interface back to its saved setup. Closing with
+  unsaved changes asks: Save to Hardware, Discard (the interface goes back
+  to its saved setup) or Cancel. Every Save to Hardware tells you to switch
+  the interface off and on: its monitor knob only takes up its outputs when
+  it starts. Until ScarlettMix has saved once it has nothing to compare
+  with and draws everything solid.
+  The program never changes anything by itself: opening it sends nothing,
+  and so does closing it unless you choose Discard or Save.
   Mono, the monitor Pad and the original's Monitor Preset menu are there too.
 - **Clock**: source selection, lock indicator, current sample rate.
 - **Presets**: save and load complete setups as JSON, and open original

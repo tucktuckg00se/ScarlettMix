@@ -10,7 +10,8 @@ from .. import names
 from ..alsa import TYPE_ENUMERATED, ElemInfo
 from ..device import Device, db_to_level, level_to_db
 from ..monitor import BLUE, RED, SILVER, Monitor
-from .widgets import MUTE_COLOR, Fader, FitScrollArea, ItemCombo, ToggleButton, fmt_db
+from .widgets import (MUTE_COLOR, Fader, FitScrollArea, ItemCombo, MarkCheckBox, ToggleButton,
+                      fmt_db)
 
 
 class EnumBinding:
@@ -27,6 +28,11 @@ class EnumBinding:
     def sync(self) -> None:
         with QSignalBlocker(self.combo):
             self.combo.setCurrentIndex(self.device.get(self.elem)[0])
+
+    def mark(self, saved) -> bool:
+        on = saved.control(self.elem)
+        self.combo.setUnsaved(on)
+        return on
 
 
 class OutputRoutingPanel(QWidget):
@@ -112,6 +118,10 @@ class OutputRoutingPanel(QWidget):
         root.addWidget(scroll, 1)
         device.add_listener(self._changed)
 
+    def mark(self, saved) -> bool:
+        """Outline what is not saved to hardware; True if anything here is."""
+        return any([b.mark(saved) for b in self._bindings.values()])
+
     def _groups(self) -> list[tuple[str, list]]:
         """Output pairs under the headings shown, in the original's order with
         the pairs that feed a headphone socket pulled out under their own name."""
@@ -192,6 +202,9 @@ class CaptureRoutingPanel(QWidget):
         device.add_listener(lambda e: self._bindings[e.numid].sync()
                             if e.numid in self._bindings else None)
 
+    def mark(self, saved) -> bool:
+        return any([b.mark(saved) for b in self._bindings.values()])
+
     def reset(self) -> None:
         for i, e in enumerate(self.device.capture):
             hardware = [it for it in e.items
@@ -261,6 +274,14 @@ class LevelStrip(QFrame):
             with QSignalBlocker(self.mute):
                 self.mute.setChecked(not any(self.device.get(self.switch)))
 
+    def mark(self, saved) -> bool:
+        level, mute = saved.control(self.volume), saved.control(self.switch)
+        if self.fader:
+            self.fader.setUnsaved(level)
+        if self.mute:
+            self.mute.setUnsaved(mute)
+        return level or mute
+
     def _fader_changed(self, db: float) -> None:
         self.value.setText(fmt_db(db) + " dB")
         self.device.set(self.volume, [db_to_level(db, self.volume)] * self.volume.count)
@@ -295,6 +316,9 @@ class OutputsPage(QWidget):
         root.addWidget(scroll)
         device.add_listener(self._changed)
 
+    def mark(self, saved) -> bool:
+        return any([s.mark(saved) for s in set(self._strips.values())])
+
     def _changed(self, e: ElemInfo) -> None:
         if s := self._strips.get(e.numid):
             s.sync()
@@ -307,15 +331,18 @@ class InputsPage(QWidget):
         super().__init__(parent)
         self.device = device
         self._sync = {}
+        self._marks = []            # (control, widget)
         form = QFormLayout(self)
         for e in device.input_switches:
             label = e.name.removesuffix(" Switch")
             if e.type == TYPE_ENUMERATED:
                 b = EnumBinding(device, e, label)
                 self._sync[e.numid] = b.sync
+                self._marks.append((e, b.combo))
                 form.addRow(label, b.combo)
             else:
-                box = QCheckBox()
+                box = MarkCheckBox()
+                self._marks.append((e, box))
                 box.setAccessibleName(label)
                 box.setEnabled(e.writable)
                 box.toggled.connect(lambda on, e=e: device.set(e, [int(on)] * e.count))
@@ -329,13 +356,21 @@ class InputsPage(QWidget):
                 form.addRow(label, box)
         device.add_listener(lambda e: self._sync.get(e.numid, lambda: None)())
 
+    def mark(self, saved) -> bool:
+        found = False
+        for e, widget in self._marks:
+            on = saved.control(e)
+            widget.setUnsaved(on)
+            found = found or on
+        return found
+
 
 
 class OutputStateButton(QPushButton):
     """One of the monitor section's output buttons: blue, silver or red."""
 
     COLORS = {BLUE: "#4a90d9", SILVER: "#b8bcc2", RED: "#d9534f"}
-    MEANING = {BLUE: "the monitor knob, Mute and Dim control it",
+    MEANING = {BLUE: "in the monitor group (knob, Mute and Dim)",
                SILVER: "independent of the monitor section",
                RED: "muted"}
     CYCLE = (BLUE, SILVER, RED)
@@ -348,23 +383,22 @@ class OutputStateButton(QPushButton):
         self.clicked.connect(self._clicked)
         self.set_state(SILVER)
 
-    def set_state(self, state: str, pending: bool = False) -> None:
-        """``pending``: in the monitor group, but drawn as an outline because
-        the interface's knob does not control this output yet."""
+    def set_state(self, state: str, unsaved: bool = False) -> None:
+        """``unsaved``: drawn as an outline, because this output's state is
+        not what the interface has stored."""
         self.state = state
         color = self.COLORS[state]
-        if pending:
-            look = f"background-color: transparent; color: {color}; border: 2px solid {color};"
-            meaning = ("Mute and Dim control it now. The knob will after Save to Hardware "
-                       "and switching the interface off and on")
+        if unsaved:
+            ink = "#666" if state == SILVER else color
+            look = f"background-color: transparent; color: {ink}; border: 2px solid {color};"
         else:
             look = f"background-color: {color}; color: #111; border: 1px solid #555;"
-            meaning = self.MEANING[state]
         self.setStyleSheet(f"QPushButton {{ {look} font-weight: bold; border-radius: 4px; }}")
-        self.setToolTip(f"{self.title}: {meaning}.\n"
-                        "Click to change: monitor group, independent, muted.")
+        self.setToolTip(f"{self.title}: {self.MEANING[state]}."
+                        + ("\nNot saved to hardware." if unsaved else "")
+                        + "\nClick to change: monitor group, independent, muted.")
         self.setAccessibleName(f"{self.title} monitor state: {state}"
-                               + (", knob after restart" if pending else ""))
+                               + (", not saved" if unsaved else ""))
 
     def _clicked(self) -> None:
         # Each click moves to the next state. (The original hides silver behind shift-click.)
@@ -376,9 +410,12 @@ class OutputStateButton(QPushButton):
 class MonitorPanel(QWidget):
     """Front-panel readout, Dim and Mute, and the ten output buttons."""
 
+    changed = Signal()          # the user changed something here
+
     def __init__(self, device: Device, monitor: Monitor, parent: QWidget | None = None):
         super().__init__(parent)
         self.device, self.monitor = device, monitor
+        self._unsaved = [False] * len(monitor.channels)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
@@ -437,28 +474,31 @@ class MonitorPanel(QWidget):
                                lambda outs=outs: self._use_preset(outs))
             preset.setMenu(menu)
             lay.addWidget(preset, 0, Qt.AlignHCenter)
-        hint = QLabel("<small>blue: knob, Mute, Dim<br>outline: Mute, Dim; knob after restart"
-                      "<br>silver: independent<br>red: muted</small>")
+        hint = QLabel("<small>blue: monitor group (knob, Mute, Dim)<br>silver: independent"
+                      "<br>red: muted<br>outline: not saved to hardware</small>")
         hint.setAlignment(Qt.AlignCenter)
         lay.addWidget(hint)
-        self.note = QLabel()
-        self.note.setWordWrap(True)
-        self.note.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self.note)
         self.sync()
 
     def sync(self) -> None:
         """Draw the buttons as the monitor object last read them."""
-        pending = set(self.monitor.pending())
-        for i, (b, state) in enumerate(zip(self.buttons, self.monitor.states)):
-            b.set_state(state, i in pending)
+        for b, state, unsaved in zip(self.buttons, self.monitor.states, self._unsaved):
+            b.set_state(state, unsaved)
         if self.mono:
             self.mono.setChecked(self.monitor.mono)
         if self.pad:
             self.pad.setChecked(self.monitor.pad)
-        self.note.setText("<small>Outlined: the knob takes these over only after Save to "
-                          "Hardware <b>and</b> switching the interface off and on.</small>"
-                          if pending else "")
+
+    def mark(self, saved) -> bool:
+        """Outline what is not saved to hardware; True if anything here is."""
+        self._unsaved = saved.monitor(self.monitor)
+        mono, pad = saved.mono(self.monitor), saved.pad(self.monitor)
+        if self.mono:
+            self.mono.setUnsaved(mono)
+        if self.pad:
+            self.pad.setUnsaved(pad)
+        self.sync()
+        return any(self._unsaved) or mono or pad
 
     def refresh(self) -> None:
         """Re-read the monitor section from the interface (reads only)."""
@@ -468,18 +508,22 @@ class MonitorPanel(QWidget):
     def _mono_clicked(self, on: bool) -> None:
         self.monitor.set_mono(on)
         self.sync()
+        self.changed.emit()
 
     def _pad_clicked(self, on: bool) -> None:
         self.monitor.set_pad(on)
         self.sync()
+        self.changed.emit()
 
     def _use_preset(self, outputs: list[int]) -> None:
         self.monitor.use_preset(outputs)
         self.sync()
+        self.changed.emit()
 
     def _state_changed(self, index: int, state: str) -> None:
         self.monitor.set_state(index, state)
         self.sync()
+        self.changed.emit()
 
     def set_status(self, knob: int, mute: bool, dim: bool) -> None:
         """Show the front panel."""
