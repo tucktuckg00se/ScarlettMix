@@ -25,8 +25,9 @@ and that list is always exactly what the unit's knob is really controlling.
 
 A blue output that is not on that list yet is moved by this program instead,
 for as long as something calls follow() with the knob's position (the open
-application does): its level is set from the knob, and the level it had
-before ("own level") is given back the moment it stops being followed.
+application does): its level is set from the knob. Turned silver, an output
+goes to 0 dB, as in MixControl; if the program stops while still moving a
+blue output, that output gets back the level it had before ("own level").
 
 Needs the controls of the patched driver.
 """
@@ -207,10 +208,9 @@ class Monitor:
 
     def _release(self, bits: int) -> None:
         """Before outputs leave the unit's knob control, set their level to
-        where the knob is now. That level takes over the moment the list is
-        written; without this it would jump to whatever was last sent, which
-        for the main monitors is typically close to full."""
-        knob = self.device.read_status()[0]
+        0 dB, as MixControl does for an output turned silver. That level
+        takes over the moment the list is written (the unit holds levels
+        written while its knob is in charge)."""
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.volume:
                 continue
@@ -221,7 +221,7 @@ class Monitor:
             values = self.device.get(output.volume)
             for side in leaving:
                 if side < len(values):
-                    values[side] = db_to_level(-knob, output.volume)
+                    values[side] = db_to_level(0, output.volume)
             # Forced: the driver may believe the level is already this value.
             self.device.set(output.volume, values, force=True)
 
@@ -310,9 +310,21 @@ class Monitor:
         self._write_note()
 
     def _settle(self) -> None:
-        """After a change: outputs that are no longer followed get their own
-        level back."""
-        self.stop_following([i for i in self.own if not self.followed(i)])
+        """After a change: outputs this program was moving that are no longer
+        blue go to 0 dB, as MixControl does for an output turned silver."""
+        leaving = [i for i in self.own if not self.followed(i)]
+        if not leaving:
+            return
+        for output in dict.fromkeys(self.channels[i][0] for i in leaving):
+            values = self.device.get(output.volume)
+            for i in leaving:
+                o, side = self.channels[i]
+                if o is output and side < len(values):
+                    values[side] = db_to_level(0, output.volume)
+            self.device.set(output.volume, values, force=True)
+        for i in leaving:
+            del self.own[i]
+        self._write_note()
 
     def save_to_hardware(self) -> bool:
         """Store the unit's settings with the whole monitor group in the knob

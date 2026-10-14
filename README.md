@@ -60,10 +60,12 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   output onto its monitor knob when it powers on. Until then the program
   does that job while it is open: it reads the knob and sets the level of
   every blue output the interface is not moving itself, so blue always means
-  "the knob controls it". Such an output goes back to its own level when it
-  stops being blue and when the program closes, so its level differs with
-  the program open and closed until the interface has been saved and
-  switched off and on. Its fader on the Output Levels tab is greyed out
+  "the knob controls it". When the program closes, such an output goes back
+  to the level it had before, so its level differs with the program open
+  and closed until the interface has been saved and switched off and on.
+  Turning any output silver sets it to 0 dB, full level, as in the
+  original (for headphones: the headphone knob alone then reaches the same
+  maximum as both knobs together). Its fader on the Output Levels tab is greyed out
   ("monitor knob"). Apart from this the program changes nothing by itself.
   Mono, the monitor Pad and the original's Monitor Preset menu are there too.
 - **Clock**: source selection, lock indicator, current sample rate.

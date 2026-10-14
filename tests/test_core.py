@@ -573,8 +573,8 @@ def test_knob_takes_an_output_after_save_and_restart(xdevice):
 
     after.set_state(6, SILVER); after.set_state(7, SILVER)          # taken off the knob again
     names = [n for n, _ in b.writes]
-    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level first: no jump
-    assert xdevice.get(hp1.volume) == [98, 98]           # the knob position (-30 in the simulator)
+    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level first
+    assert xdevice.get(hp1.volume) == [128, 128]         # silver is 0 dB, as in MixControl
     assert _lists(xdevice) == [3, 3, 3]
     after.set_state(6, BLUE)
     assert _lists(xdevice)[0] == 3 and after.pending() == [6]       # never added back while running
@@ -701,7 +701,7 @@ def _level(d, label):
     return d.get(next(o for o in d.outputs if o.label == label).volume)
 
 
-def test_blue_output_follows_the_knob_and_gets_its_level_back(xdevice):
+def test_blue_output_follows_the_knob_and_goes_to_full_level_when_silver(xdevice):
     from scarlettmix.monitor import BLUE, SILVER, Monitor
     from scarlettmix.saved import Saved
     d = xdevice; b = d.backend
@@ -725,8 +725,9 @@ def test_blue_output_follows_the_knob_and_gets_its_level_back(xdevice):
     assert not saved.control(line34.volume) and saved.monitor(mon)[2]
     assert presets.saved_record(d, MixController(d).model, mon)["controls"][line34.volume.name] == [118, 128]
 
-    mon.set_state(2, SILVER)                             # stops being followed
-    assert d.get(line34.volume) == [118, 128] and mon.own == {}
+    mon.set_state(2, SILVER)                             # silver: 0 dB, as in MixControl
+    assert d.get(line34.volume) == [128, 128] and mon.own == {}
+    d.set(line34.volume, [118, 128])
     mon.set_state(2, BLUE); mon.follow(60)
     mon.stop_following()                                 # the application closes
     assert d.get(line34.volume) == [118, 128] and mon.own == {}

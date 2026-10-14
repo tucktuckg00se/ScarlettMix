@@ -75,15 +75,15 @@ Mixes are numbered, never lettered.
   channel applies in every mix; its switch sits on the left input's strip.
 - With the patched driver: meters, Dim, Mute and the ten output buttons with
   the original's blue / silver / red states. Each click moves to the next
-  state; the original toggles blue and red and needs shift-click for silver. Silver returns an output to its own level
-  rather than forcing 0 dB.
+  state; the original toggles blue and red and needs shift-click for silver. Silver sets the output to 0 dB, as in the
+  original.
 - Also with the patched driver: Mono, Pad and the Monitor Preset menu.
 - The knob assignment works as in the original's hardware-control mode: it
   is stored in the unit and takes effect after a save and a restart of the
   unit, which is why every Save to Hardware asks for the interface to be
   switched off and on. Until then the program follows the knob itself for
-  newly blue outputs while it is open, and gives them their own level back
-  when they stop being blue or it closes.
+  newly blue outputs while it is open, and gives them back the level they
+  had before when it closes.
 - Not in the original: every control is drawn solid when its setting is
   saved to hardware and as an outline when it is not, with Revert and a
   Save / Discard / Cancel question on closing.
