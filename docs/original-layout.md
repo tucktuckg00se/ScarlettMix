@@ -78,4 +78,8 @@ Mixes are numbered, never lettered.
   state; the original toggles blue and red and needs shift-click for silver. Silver returns an output to its own level
   rather than forcing 0 dB.
 - Also with the patched driver: Mono, Pad and the Monitor Preset menu.
+- The knob assignment works as in the original's hardware-control mode: it
+  is stored in the unit and takes effect after a save and a restart of the
+  unit. In between, the program follows the knob itself for newly blue
+  outputs, marked *.
 - Not present: PFL and an on-screen monitor knob (the knob position is shown).

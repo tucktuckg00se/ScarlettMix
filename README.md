@@ -51,8 +51,7 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   interface only when it powers on: after making an output blue, use Save
   to Hardware and switch the interface off and on. Until then the output is
   marked * and this program follows the knob for it.
-  Mono, the monitor Pad and the original's Monitor Preset menu are there too. The knob is followed in
-  software by the background service for outputs other than 1/2.
+  Mono, the monitor Pad and the original's Monitor Preset menu are there too.
 - **Clock**: source selection, lock indicator, current sample rate.
 - **Presets**: save and load complete setups as JSON, and open original
   MixControl snapshot files (`.18i20` and friends).
