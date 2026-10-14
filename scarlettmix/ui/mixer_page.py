@@ -229,8 +229,9 @@ class MasterStrip(QFrame):
         super().__init__(parent)
         self.device = device
         self.setObjectName("strip")
-        # Same width and rows as a channel strip, so everything lines up.
-        self.setFixedWidth(strip_width(self))
+        # As wide as a stereo channel strip, with the same rows, so everything
+        # lines up while the mix's own controls stand out.
+        self.setFixedWidth(strip_width(self) * 2)
         lay = QVBoxLayout(self)
         _strip_margins(lay)
 
