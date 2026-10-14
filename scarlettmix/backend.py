@@ -130,6 +130,11 @@ class FakeBackend(Backend):
                 self._values[numid] = [start] * count
             self.by_name = {e.name: e for e in self._elems}
             self._values[self.by_name["Monitor Hardware Status"].numid] = [30, 125, 0, 0]
+            # A unit nobody has configured: knob, Mute and Dim act on outputs 1/2.
+            self._mask_ids = [self.by_name[f"Monitor Mask 0x0{c}"].numid for c in "abc"]
+            for numid in self._mask_ids:
+                self._values[numid] = [3]
+            self._saved_masks = [3, 3, 3]
 
     def elements(self):
         return list(self._elems)
@@ -154,6 +159,7 @@ class FakeBackend(Backend):
         if e.name == "Save To HW":                       # a trigger: reads back as off
             self.saves += vals[0]
             self._values[e.numid] = [0]
+            self._saved_masks = [self._values[i][0] for i in self._mask_ids]
         elif e.name in ("Monitor Hardware Mute", "Monitor Hardware Dim"):
             status = self._values[self.by_name["Monitor Hardware Status"].numid]
             status[2 if e.name.endswith("Mute") else 3] = vals[0]
@@ -162,6 +168,11 @@ class FakeBackend(Backend):
 
     def sample_rate(self):
         return 48000
+
+    def power_cycle(self) -> None:
+        """Extras only: the unit restarts with the masks it last saved."""
+        for numid, value in zip(self._mask_ids, self._saved_masks):
+            self._values[numid] = [value]
 
 
 def find_cards() -> list[tuple[int, str, str]]:

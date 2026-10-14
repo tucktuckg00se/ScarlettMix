@@ -47,6 +47,10 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   Hardware; and the monitor section's Dim, Mute and ten output buttons. Blue
   outputs follow the front-panel knob, Mute and Dim; silver ones are
   independent; red ones are muted. Each click moves to the next state.
+  Mute and Dim assignments act at once. The knob assignment is read by the
+  interface only when it powers on: after making an output blue, use Save
+  to Hardware and switch the interface off and on. Until then the output is
+  marked * and this program follows the knob for it.
   Mono, the monitor Pad and the original's Monitor Preset menu are there too. The knob is followed in
   software by the background service for outputs other than 1/2.
 - **Clock**: source selection, lock indicator, current sample rate.

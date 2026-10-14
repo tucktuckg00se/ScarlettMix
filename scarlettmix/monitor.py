@@ -13,14 +13,18 @@ docs/missing-features.md):
   * Two bit masks name the outputs its Mute and Dim buttons act on. They
     take effect at once.
   * A third mask names the outputs its monitor knob controls. The interface
-    reads it at power-on only, so a change needs Save To HW and a restart of
-    the unit. While an output is in it, level changes from the computer are
-    held back. Removing an output takes effect at once.
+    reads it at power-on only: adding an output needs Save To HW and a
+    restart of the unit. Removing one takes effect at once. While an output
+    is in the mask, level changes from the computer are held back.
 
-Until this module is reworked around that, it uses a stopgap for outputs
-other than the first pair: it keeps them out of the third mask and follows
-the knob in software, by reading its position and setting their level.
+So this module never adds an output to the knob mask of a running unit, only
+removes. The mask in the unit is then always exactly the set of outputs its
+knob is really controlling, and can simply be read. An output made blue since
+the last restart is "pending": it is written into the saved copy by
+save_to_hardware(), and until the unit restarts the knob is followed for it
+in software, by reading the knob's position and setting the output's level.
 
+Needs the controls of the patched driver.
 """
 
 from __future__ import annotations
@@ -54,17 +58,18 @@ class Monitor:
     def __init__(self, device: Device):
         self.device = device
         self.channels = device.analogue_channels()
-        # How the unit behaves when nothing has configured it: first pair only.
+        # How a unit behaves when nothing has configured it: first pair only.
         self.states = [BLUE if i < 2 else SILVER for i in range(len(self.channels))]
-        # Level each followed output had before the knob took it over, so it
-        # can be given back when the output stops following.
+        # Level each software-followed output had before the knob took it
+        # over, so it can be given back when the output stops following.
         self.parked: dict[int, int] = {}
-        # First-pair outputs already handed over to software level control.
-        self.released: set[int] = set()
         # Mono: blue pairs play the sum of their two channels on both.
         self.mono = False
         # Pad: the interface's own attenuator on the main monitor outputs.
         self.pad = False
+        # Button states as of the last Save to Hardware from here, if known.
+        self.saved_states: list[str] | None = None
+        self._live: int | None = None
         self._mtime = 0.0
 
     @property
@@ -86,12 +91,15 @@ class Monitor:
         return os.path.join(config_dir(),
                             f"monitor-{self.device.backend.usb_id.replace(':', '-')}.json")
 
+    def _fits(self, states) -> bool:
+        return (isinstance(states, list) and len(states) == len(self.channels)
+                and all(s in STATES for s in states))
+
     def set_states(self, states) -> bool:
         """Adopt a list of states if it fits this device."""
-        states = list(states or [])
-        if len(states) != len(self.channels) or any(s not in STATES for s in states):
+        if not self._fits(states):
             return False
-        self.states = states
+        self.states = list(states)
         return True
 
     def load(self) -> bool:
@@ -104,9 +112,10 @@ class Monitor:
             # Keep levels this process parked itself if the file does not know them.
             self.parked = {**self.parked,
                            **{int(k): int(v) for k, v in data.get("parked", {}).items()}}
-            self.released = {int(i) for i in data.get("released", [])}
             self.mono = bool(data.get("mono", False))
             self.pad = bool(data.get("pad", False))
+            saved = data.get("saved")
+            self.saved_states = list(saved) if self._fits(saved) else None
             return True
         except (OSError, ValueError, AttributeError):
             return False
@@ -115,9 +124,8 @@ class Monitor:
         os.makedirs(os.path.dirname(self.path()), exist_ok=True)
         tmp = self.path() + ".tmp"
         with open(tmp, "w") as f:
-            json.dump({"outputs": self.states, "parked": self.parked,
-                       "released": sorted(self.released), "mono": self.mono,
-                       "pad": self.pad}, f)
+            json.dump({"outputs": self.states, "parked": self.parked, "mono": self.mono,
+                       "pad": self.pad, "saved": self.saved_states}, f)
         os.replace(tmp, self.path())
         self._mtime = os.path.getmtime(self.path())
 
@@ -128,36 +136,54 @@ class Monitor:
                 return False
         except OSError:
             return False
-        before = list(self.states)
-        return self.load() and self.states != before
+        before = (list(self.states), self.mono, self.pad)
+        return self.load() and (self.states, self.mono, self.pad) != before
+
+    # -- what the unit is doing ------------------------------------------------
+
+    def refresh(self) -> int:
+        """Read which outputs the unit's knob is controlling right now."""
+        self._live = self.device.backend.read(self.device.hw_masks[0])[0]
+        return self._live
+
+    def live_mask(self) -> int:
+        return self.refresh() if self._live is None else self._live
+
+    def mask(self) -> int:
+        """Every blue output: what the Mute and Dim buttons act on."""
+        return sum(1 << i for i, s in enumerate(self.states) if s == BLUE)
+
+    def on_knob(self, i: int) -> bool:
+        """Whether the unit itself is moving output i with the knob."""
+        return self.states[i] == BLUE and bool(self.live_mask() >> i & 1)
+
+    def pending(self) -> list[int]:
+        """Blue outputs the unit will only take over after a save and a restart."""
+        return [i for i, s in enumerate(self.states) if s == BLUE and not self.on_knob(i)]
+
+    def unsaved(self) -> bool:
+        """Whether the buttons differ from what was last saved to the unit from here."""
+        return self.saved_states is not None and self.saved_states != self.states
 
     # -- hardware ------------------------------------------------------------
 
-    def mask(self) -> int:
-        """Outputs the Mute and Dim buttons act on: every blue one."""
-        return sum(1 << i for i, s in enumerate(self.states) if s == BLUE)
-
-    def _knob_owned(self, i: int) -> bool:
-        """Whether output i belongs to the pair the interface's knob moves."""
-        return self.channels[i][0] is self.channels[0][0]
-
-    def hardware_mask(self) -> int:
-        """Outputs whose level is left to the interface: blue ones in the knob's pair."""
-        return sum(1 << i for i, s in enumerate(self.states) if s == BLUE and self._knob_owned(i))
-
     def apply(self) -> None:
         """Send the button states to the interface."""
-        self._release_knob_pair()
-        self.device.write(self.device.hw_masks[0], [self.hardware_mask()])
+        live = self.refresh()
+        keep = live & self.mask()
+        if keep != live:
+            self._release(live & ~keep)
+            self.device.write(self.device.hw_masks[0], [keep])
+            self._live = keep
         for e in self.device.hw_masks[1:]:
             self.device.write(e, [self.mask()])
-        self._park_levels()
         if self.device.hw_pad:
             self.device.write(self.device.hw_pad, [int(self.pad)])
         # Mono applies to a pair only when both of its outputs are blue, as in the original.
         for pair, e in enumerate(self.device.hw_mono):
             both = self.states[2 * pair:2 * pair + 2] == [BLUE, BLUE]
             self.device.write(e, [int(self.mono and both)])
+        self._park_levels()
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.switch:
                 continue
@@ -168,37 +194,35 @@ class Monitor:
                     values[side] = 0 if self.states[i] == RED else 1
             self.device.set(output.switch, values)
 
-    def _release_knob_pair(self) -> None:
-        """Before an output of the knob's pair leaves the interface's control,
-        set its software level to where the knob is now. That level takes over
-        the moment the mask is written, so without this it would jump to
-        whatever was last sent, typically close to full."""
-        output = self.channels[0][0]
-        if not output.volume:
-            return
-        leaving = [i for i, s in enumerate(self.states)
-                   if self._knob_owned(i) and s != BLUE and i not in self.released]
-        self.released -= {i for i, s in enumerate(self.states) if s == BLUE}
-        if not leaving:
-            return
+    def _release(self, bits: int) -> None:
+        """Before outputs leave the unit's knob control, set their level to
+        where the knob is now. That level takes over the moment the mask is
+        written; without this it would jump to whatever was last sent, which
+        for the main monitors is typically close to full."""
         knob = self.device.read_status()[0]
-        self.device.refresh(output.volume)
-        values = self.device.get(output.volume)
-        for i in leaving:
-            side = self.channels[i][1]
-            if side < len(values):
-                values[side] = db_to_level(-knob, output.volume)
-            self.released.add(i)
-        # Forced: the driver may believe the level is already this value.
-        self.device.set(output.volume, values, force=True)
+        for output in dict.fromkeys(o for o, _ in self.channels):
+            if not output.volume:
+                continue
+            leaving = [(i, side) for i, (o, side) in enumerate(self.channels)
+                       if o is output and bits >> i & 1]
+            if not leaving:
+                continue
+            self.device.refresh(output.volume)
+            values = self.device.get(output.volume)
+            for i, side in leaving:
+                if side < len(values):
+                    values[side] = db_to_level(-knob, output.volume)
+                self.parked.pop(i, None)
+            # Forced: the driver may believe the level is already this value.
+            self.device.set(output.volume, values, force=True)
 
     def _followed(self, i: int) -> bool:
         """Whether output i's level is driven by the knob from software."""
-        return self.states[i] == BLUE and not self._knob_owned(i)
+        return self.states[i] == BLUE and not self.on_knob(i)
 
     def _park_levels(self) -> None:
-        """Remember the level of outputs that start following, and give it
-        back to outputs that stop."""
+        """Remember the level of outputs that start following in software,
+        and give it back to outputs that stop."""
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.volume:
                 continue
@@ -209,17 +233,16 @@ class Monitor:
                     continue
                 if self._followed(i):
                     self.parked.setdefault(i, values[side])
-                elif i in self.parked:
+                elif i in self.parked and self.states[i] != BLUE:
                     values[side] = self.parked.pop(i)
             self.device.set(output.volume, values)
 
     def follow(self, attenuation: int) -> int:
-        """Make blue outputs track the monitor knob. The first pair is left to
-        the interface, which already applies the knob there. Returns writes made."""
+        """Make pending blue outputs track the monitor knob. Outputs the unit
+        already moves are left alone. Returns the number of writes made."""
         written = 0
-        first = self.channels[0][0] if self.channels else None
         for output in dict.fromkeys(o for o, _ in self.channels):
-            if output is first or not output.volume:
+            if not output.volume:
                 continue
             if not any(self._followed(i) for i, (o, _) in enumerate(self.channels) if o is output):
                 continue
@@ -230,3 +253,23 @@ class Monitor:
                     values[side] = db_to_level(-attenuation, output.volume)
             written += self.device.set(output.volume, values)
         return written
+
+    def save_to_hardware(self) -> bool:
+        """Store the unit's settings with every blue output in the knob mask.
+
+        The mask is written in full only for the moment of the save and then
+        put back, so the running unit is not changed. Returns True if some
+        output will only come under the knob once the unit is restarted.
+        """
+        live = self.refresh()
+        want = self.mask()
+        if want != live:
+            self.device.write(self.device.hw_masks[0], [want])
+        try:
+            self.device.save_to_hardware()
+        finally:
+            if want != live:
+                self.device.write(self.device.hw_masks[0], [live])
+        self.saved_states = list(self.states)
+        self.save()
+        return bool(self.pending())

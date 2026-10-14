@@ -92,6 +92,7 @@ class MainWindow(QMainWindow):
         if self.monitor.available:
             # Button states are ours to remember; the unit cannot report them.
             self.monitor.load()
+            self.monitor.refresh()      # which outputs the unit's knob controls now (a read)
             self.monitor_panel = MonitorPanel(device, self.monitor)
             mon_lay.addWidget(self.monitor_panel)
         mon_lay.addWidget(LevelStrip(device, "Master", device.master_volume, device.master_switch,
@@ -230,10 +231,22 @@ class MainWindow(QMainWindow):
         ) != QMessageBox.Yes:
             return
         try:
-            self.device.save_to_hardware()
+            restart_needed = False
+            if self.monitor_panel:
+                # Also writes the knob assignment into the saved copy.
+                restart_needed = self.monitor.save_to_hardware()
+                self.monitor_panel.saved()
+            else:
+                self.device.save_to_hardware()
         except AlsaError as err:
             QMessageBox.warning(self, "Save to hardware", f"The interface refused:\n{err}")
             return
+        if restart_needed:
+            QMessageBox.information(
+                self, "Save to hardware",
+                "Saved.\n\nThe outputs marked * will follow the monitor knob by themselves "
+                "once the interface has been switched off and on. Until then this program "
+                "follows the knob for them.")
         self.statusBar().showMessage("Saved to the interface.", 5000)
 
     def _poll_status(self) -> None:

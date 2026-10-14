@@ -607,7 +607,8 @@ def test_knob_pair_leaves_blue_at_the_knob_level(xdevice, tmp_path, monkeypatch)
     assert xdevice.get(monitor.volume) == [110, 110]
     mon.states[0] = mon.states[1] = BLUE
     mon.apply()
-    assert xdevice.get(xdevice.hw_masks[0]) == [0b11] and mon.released == set()
+    # Blue again, but never added back to a running unit: pending until save and restart.
+    assert xdevice.get(xdevice.hw_masks[0]) == [0] and mon.pending() == [0, 1]
 
 
 def test_monitor_presets_from_the_original(xdevice):
@@ -646,3 +647,37 @@ def test_monitor_pad(xdevice, tmp_path, monkeypatch):
     assert xdevice.get(xdevice.hw_pad) == [1]
     again = Monitor(Device(FakeBackend(extras=True)))
     assert again.load() and again.pad is True
+
+
+def test_knob_assignment_takes_a_save_and_a_restart(xdevice, tmp_path, monkeypatch):
+    from scarlettmix.monitor import BLUE, SILVER, Monitor
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    b = xdevice.backend
+    mon = Monitor(xdevice)
+    hp1 = next(o for o in xdevice.outputs if o.label == "Line 7/8")
+    assert mon.live_mask() == 3 and mon.pending() == [] and not mon.unsaved()
+
+    mon.states[6] = mon.states[7] = BLUE                 # headphones 1 follow the monitor section
+    mon.apply()
+    # Mute and Dim act on them at once; the knob mask of the running unit is untouched.
+    assert [xdevice.get(e) for e in xdevice.hw_masks] == [[3], [0b11000011], [0b11000011]]
+    assert mon.pending() == [6, 7]
+    assert mon.follow(40) == 1 and xdevice.get(hp1.volume) == [88, 88]      # software stopgap
+
+    assert mon.save_to_hardware() is True                # still pending: needs a restart
+    assert b.saves == 1 and b._saved_masks[0] == 0b11000011
+    assert xdevice.get(xdevice.hw_masks[0]) == [3]       # running unit put back as it was
+    assert not mon.unsaved()
+
+    b.power_cycle()
+    after = Monitor(xdevice); after.load()
+    assert after.live_mask() == 0b11000011 and after.pending() == []
+    b.writes.clear()
+    assert after.follow(55) == 0 and b.writes == []      # the unit moves them now, not us
+
+    after.states[6] = after.states[7] = SILVER           # taken off the knob again
+    after.apply()
+    names = [n for n, _ in b.writes]
+    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level set first: no jump
+    assert xdevice.get(hp1.volume) == [98, 98]           # the knob position (-30 in the simulator)
+    assert xdevice.get(xdevice.hw_masks[0]) == [3] and after.unsaved()
