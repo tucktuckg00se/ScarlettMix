@@ -5,12 +5,12 @@ from __future__ import annotations
 import os
 
 from PySide6.QtCore import QSignalBlocker, QSocketNotifier, Qt, QTimer
-from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
+from PySide6.QtGui import QAction, QIcon, QKeySequence
+from PySide6.QtWidgets import (QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QSizePolicy, QStyle,
                                QMessageBox, QPushButton, QSplitter, QTabWidget, QVBoxLayout,
                                QWidget)
 
-from .. import presets
+from .. import __version__, presets
 from ..alsa import AlsaError
 from ..backend import AlsaBackend, Backend, find_cards
 from ..device import Device
@@ -20,7 +20,8 @@ from ..monitor import Monitor
 from ..saved import Saved
 from .pages import (CaptureRoutingPanel, InputsPage, LevelStrip, MonitorPanel,
                     OutputRoutingPanel, OutputsPage)
-from .widgets import UNSAVED_COLOR, ItemCombo
+from . import theme
+from .widgets import ItemCombo, caption, card
 
 PRESET_FILTER = ("Presets (*.json *.18i20 *.18i8 *.18i6 *.6i6 *.8i6);;"
                  "ScarlettMix presets (*.json);;"
@@ -57,6 +58,9 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(QAction("&Quit", self, shortcut=QKeySequence.Quit,
                                     triggered=self.close))
+        help_menu = self.menuBar().addMenu("&Help")
+        help_menu.addAction(QAction("&About ScarlettMix", self, triggered=self.about))
+        self.setWindowIcon(QIcon.fromTheme("audio-card"))
 
         self._save_timer = QTimer(self, singleShot=True, interval=400)
         self._save_timer.timeout.connect(self._save_state)
@@ -97,12 +101,12 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         root = QVBoxLayout(central)
+        root.setContentsMargins(theme.S3, theme.S2, theme.S3, theme.S2)
+        root.setSpacing(theme.S2)
         root.addLayout(self._header())
         root.addWidget(self._banner())
-        self.restart_banner = QLabel()
-        self.restart_banner.setWordWrap(True)
-        self.restart_banner.setStyleSheet("QLabel { background-color: #f0a030; color: #111; "
-                                          "font-weight: bold; padding: 6px 8px; }")
+        self.restart_banner, self.restart_text = self._message_bar(
+            "noticeBar", QStyle.SP_MessageBoxInformation)
         self.restart_banner.hide()
         root.addWidget(self.restart_banner)
 
@@ -114,6 +118,7 @@ class MainWindow(QMainWindow):
         self.mixer_page.message.connect(lambda text: self.statusBar().showMessage(text, 5000))
 
         self.tabs = QTabWidget()
+        self.tabs.setDocumentMode(True)
         self.routing_page = OutputRoutingPanel(device)
         self.outputs_page = OutputsPage(device)
         self._tab_pages = [(self.routing_page, "Routing"), (CaptureRoutingPanel(device), "DAW Inputs"),
@@ -122,9 +127,24 @@ class MainWindow(QMainWindow):
             self._tab_pages.append((InputsPage(device), "Inputs"))
         for page, title in self._tab_pages:
             self.tabs.addTab(page, title)
+        # Each page's own action (a preset menu, a reset) sits in the tab bar's corner.
+        corner = QWidget()
+        corner_lay = QHBoxLayout(corner)
+        corner_lay.setContentsMargins(0, 0, 0, theme.S1)
+        self._corners = []
+        for page, _ in self._tab_pages:
+            button = getattr(page, "corner", None)
+            if button:
+                corner_lay.addWidget(button)
+            self._corners.append(button)
+        self.tabs.setCornerWidget(corner, Qt.TopRightCorner)
+        self.tabs.currentChanged.connect(self._show_corner)
+        self._show_corner(0)
 
-        monitor = QGroupBox("Monitor")
+        monitor = card()
+        monitor.setFixedWidth(236)
         mon_lay = QVBoxLayout(monitor)
+        mon_lay.setContentsMargins(theme.S3, theme.S2, theme.S3, theme.S3)
         self.monitor = Monitor(device)
         self.monitor_panel = None
         if self.monitor.available:
@@ -133,25 +153,35 @@ class MainWindow(QMainWindow):
             self.monitor_panel.changed.connect(self._mark_timer.start)
             self.monitor_panel.message.connect(lambda t: self.statusBar().showMessage(t, 12000))
             mon_lay.addWidget(self.monitor_panel)
+            mon_lay.addStretch(1)
         self.master_strip = LevelStrip(device, "Master", device.master_volume, device.master_switch,
                                        bold=True, listen=True)
-        mon_lay.addWidget(self.master_strip, 1)
+        self.master_strip.setFixedWidth(112)
         self._update_saved()
 
+        # Same arrangement as the original: the mixer across the top; below
+        # it the routing tabs, the monitor section and the master level.
         lower = QWidget()
         lower_lay = QHBoxLayout(lower)
         lower_lay.setContentsMargins(0, 0, 0, 0)
+        lower_lay.setSpacing(theme.S3)
         lower_lay.addWidget(self.tabs, 1)
-        lower_lay.addWidget(monitor)
-
-        split = QSplitter(Qt.Vertical)
-        split.addWidget(self.mixer_page)
-        split.addWidget(lower)
-        split.setStretchFactor(0, 1)
-        split.setStretchFactor(1, 0)
-        split.setChildrenCollapsible(False)
-        root.addWidget(split, 1)
+        if self.monitor_panel:
+            lower_lay.addWidget(monitor)
+        lower_lay.addWidget(self.master_strip)
+        self._lower = lower
+        left = QSplitter(Qt.Vertical)
+        left.addWidget(self.mixer_page)
+        left.addWidget(lower)
+        left.setStretchFactor(0, 1)
+        left.setStretchFactor(1, 0)
+        left.setChildrenCollapsible(False)
+        root.addWidget(left, 1)
         self.setCentralWidget(central)
+        # The routing area gets the height the routing grid needs, the mixer
+        # the rest (the other tabs scroll or shrink within that height).
+        self._left = left
+        QTimer.singleShot(0, self._size_routing_area)
 
         device.add_listener(self._device_changed)
         fd = backend.event_fd()
@@ -183,34 +213,57 @@ class MainWindow(QMainWindow):
             want = want.boundedTo(screen.size() * 0.94)
         self.resize(want)
 
-    def _banner(self) -> QFrame:
-        """Shown while the driver's level readings cannot be believed."""
-        self.banner = QFrame()
-        self.banner.setFrameShape(QFrame.StyledPanel)
-        self.banner.setStyleSheet("QFrame { background-color: #f3d98b; } QLabel { color: #222; }")
-        lay = QHBoxLayout(self.banner)
-        lay.setContentsMargins(8, 4, 8, 4)
+    def _message_bar(self, kind: str, icon) -> tuple[QFrame, QLabel]:
+        """A one-line message across the window: icon, text, optional button."""
+        bar = QFrame()
+        bar.setObjectName(kind)
+        lay = QHBoxLayout(bar)
+        lay.setContentsMargins(theme.S2, theme.S1, theme.S1, theme.S1)
+        lay.setSpacing(theme.S2)
+        pic = QLabel()
+        pic.setPixmap(self.style().standardIcon(icon).pixmap(16, 16))
+        lay.addWidget(pic)
         text = QLabel()
         text.setWordWrap(True)
         lay.addWidget(text, 1)
+        return bar, text
+
+    def _banner(self) -> QFrame:
+        """Shown while the driver's level readings cannot be believed."""
+        self.banner, text = self._message_bar("warnBar", QStyle.SP_MessageBoxWarning)
         self.sync_button = QPushButton("Sync")
         self.sync_button.setToolTip("Send every level and switch shown here to the interface, "
                                     "so that it and the driver agree")
         self.sync_button.clicked.connect(self.sync_to_unit)
-        lay.addWidget(self.sync_button)
+        self.banner.layout().addWidget(self.sync_button)
         if self._snapshot:
-            text.setText("The interface or the computer has restarted. Showing the setup from "
-                         "your last Save to Hardware, because levels cannot be read back from "
-                         "the interface. Sync sends this setup to make sure it matches.")
+            text.setText("Interface restarted: showing your last saved setup, as levels can't "
+                         "be read back.")
+            text.setToolTip("After the interface or the computer restarts, the driver cannot "
+                            "read levels, gains and mutes back, so the setup from your last Save "
+                            "to Hardware is shown. Sync sends it to make sure the interface "
+                            "matches.")
         else:
-            text.setText("The interface or the computer has restarted and ScarlettMix has no "
-                         "record of what the interface holds, so the levels and mutes shown may "
-                         "be wrong. Anything you change "
-                         "is sent. Loading a preset, or Save to Hardware once things are as you "
-                         "want them, puts this right.")
+            text.setText("Interface restarted: levels and mutes shown may be wrong.")
+            text.setToolTip("The driver cannot read levels, gains and mutes back after a restart "
+                            "and there is no saved setup to show instead. Anything you change is "
+                            "sent. Loading a preset, or Save to Hardware once things are as you "
+                            "want them, puts this right.")
             self.sync_button.hide()     # never push readings we know to be unreliable
         self.banner.setVisible(self.device.untrusted)
         return self.banner
+
+    def _size_routing_area(self) -> None:
+        want = self.routing_page.sizeHint().height() + self.tabs.tabBar().sizeHint().height() + theme.S2
+        if self.monitor_panel:
+            want = max(want, self.monitor_panel.sizeHint().height() + theme.S2 + theme.S3 + 4)
+        total = sum(self._left.sizes())
+        self._left.setSizes([max(1, total - want), want])
+
+    def _show_corner(self, index: int) -> None:
+        for i, button in enumerate(self._corners):
+            if button:
+                button.setVisible(i == index)
 
     def _now_trusted(self) -> None:
         self.device.untrusted = False
@@ -234,36 +287,45 @@ class MainWindow(QMainWindow):
     def _header(self) -> QHBoxLayout:
         d = self.device
         bar = QHBoxLayout()
+        bar.setSpacing(theme.S2)
         name = QLabel(d.model_name)
+        name.setObjectName("deviceName")
         font = name.font()
-        font.setBold(True)
-        font.setPointSizeF(font.pointSizeF() * 1.15)
+        font.setPointSizeF(font.pointSizeF() * 1.25)
         name.setFont(font)
         bar.addWidget(name)
-        bar.addSpacing(20)
+        bar.addSpacing(theme.S4)
 
         self.clock = None
         if d.clock_source:
-            bar.addWidget(QLabel("Clock source:"))
+            bar.addWidget(caption("Clock"))
             self.clock = ItemCombo(d.clock_source.items)
             self.clock.setAccessibleName("Clock source")
             self.clock.setCurrentIndex(d.get(d.clock_source)[0])
             self.clock.currentIndexChanged.connect(lambda i: d.set(d.clock_source, [i]))
             bar.addWidget(self.clock)
+        chip = QFrame()
+        chip.setObjectName("chip")
+        chip_lay = QHBoxLayout(chip)
+        chip_lay.setContentsMargins(theme.S2 + 2, 1, theme.S2 + 2, 1)
+        chip_lay.setSpacing(theme.S1 + 2)
         self.sync = QLabel()
-        bar.addWidget(self.sync)
-        bar.addSpacing(12)
+        chip_lay.addWidget(self.sync)
+        chip_lay.addWidget(caption("\u00b7"))
         self.rate = QLabel()
         self.rate.setToolTip("Sample rate of the running stream. On Linux this is chosen by the "
                              "audio server (PipeWire/JACK) or the application, not by the mixer.")
-        bar.addWidget(self.rate)
+        chip_lay.addWidget(self.rate)
+        bar.addWidget(chip)
         bar.addStretch(1)
         self.saved_label = QLabel()
         self.revert_button = QPushButton("Revert")
+        self.revert_button.setObjectName("flat")
         self.revert_button.setToolTip("Put the interface back to the setup it has stored, "
                                       "dropping every change that is not saved")
         self.revert_button.clicked.connect(self.revert_to_saved)
         self.save_button = QPushButton("Save to Hardware")
+        self.save_button.setObjectName("primary")
         self.save_button.setToolTip("Store the running setup in the interface, so it starts up "
                                     "this way with or without the computer")
         self.save_button.clicked.connect(self.save_to_hardware)
@@ -310,24 +372,24 @@ class MainWindow(QMainWindow):
         restart = saved.known and (same_power or bool(waiting))
         self.restart_banner.setVisible(restart)
         if restart:
-            self.restart_banner.setText(
+            self.restart_text.setText(
                 "Saved to hardware \u2013 now switch the interface off and on to finish."
                 + (f" Until then its monitor knob does not control {_outputs(waiting)}."
                    if waiting else ""))
         if not saved.known:
-            text, color, tip = ("Not yet saved from ScarlettMix", "#888",
+            text, color, tip = ("Not yet saved from ScarlettMix", theme.colors()["muted"],
                                 "ScarlettMix has no record of what the interface has stored, so "
                                 "it cannot show what is saved. Save to Hardware once to start "
                                 "tracking changes.")
         elif self.unsaved:
-            text, color, tip = ("\u25cf Not saved", UNSAVED_COLOR,
+            text, color, tip = ("\u25cf Not saved", theme.UNSAVED,
                                 "Everything drawn as an outline is lost when the interface is "
                                 "switched off, unless you Save to Hardware.")
         elif restart:
-            text, color, tip = ("\u2713 Saved \u2013 restart the interface", UNSAVED_COLOR,
+            text, color, tip = ("\u2713 Saved \u2013 restart the interface", theme.UNSAVED,
                                 "Everything is stored. Switch the interface off and on to finish.")
         else:
-            text, color, tip = ("\u2713 Saved to hardware", "#3fa34d",
+            text, color, tip = ("\u2713 Saved to hardware", theme.OK,
                                 "The running setup is what the interface has stored.")
         self.saved_label.setText(text)
         self.saved_label.setStyleSheet(f"color: {color};")
@@ -468,7 +530,7 @@ class MainWindow(QMainWindow):
                 d.refresh(d.sync_status)
                 locked = d.item(d.sync_status) == "Locked"
                 self.sync.setText("● Locked" if locked else "● No lock")
-                self.sync.setStyleSheet(f"color: {'#3fa34d' if locked else '#d9534f'};")
+                self.sync.setStyleSheet(f"color: {theme.OK if locked else theme.MUTE};")
             rate = d.backend.sample_rate()
         except AlsaError:
             self._disconnected()
@@ -556,6 +618,17 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Save preset", f"Could not save:\n{err}")
             return
         self.statusBar().showMessage(f"Saved {os.path.basename(path)}.", 5000)
+
+    def about(self) -> None:
+        QMessageBox.about(
+            self, "About ScarlettMix",
+            f"<h3>ScarlettMix {__version__}</h3>"
+            "<p>Mixer and routing control for first-generation Focusrite Scarlett "
+            "interfaces on Linux, modelled on the discontinued Scarlett MixControl.</p>"
+            "<p>Licensed under the GNU GPL, version 3 or later.<br>"
+            '<a href="https://github.com/tucktuckg00se/ScarlettMix">'
+            "github.com/tucktuckg00se/ScarlettMix</a></p>"
+            "<p>Not affiliated with Focusrite.</p>")
 
     def _ask_close(self) -> str:
         """Unsaved changes at close: "save", "discard" or "cancel"."""

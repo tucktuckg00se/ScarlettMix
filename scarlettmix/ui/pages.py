@@ -4,14 +4,16 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt, QSignalBlocker, Signal
 from PySide6.QtWidgets import (QCheckBox, QFormLayout, QFrame, QGridLayout, QHBoxLayout, QLabel,
-                               QMenu, QPushButton, QToolButton, QVBoxLayout, QWidget)
+                               QMenu, QPushButton, QSizePolicy, QToolButton, QToolTip,
+                               QVBoxLayout, QWidget)
 
 from .. import names
 from ..alsa import TYPE_ENUMERATED, ElemInfo
 from ..device import Device, db_to_level, level_to_db
 from ..monitor import BLUE, RED, SILVER, Monitor
+from . import theme
 from .widgets import (MUTE_COLOR, Fader, FitScrollArea, ItemCombo, MarkCheckBox, ToggleButton,
-                      fmt_db)
+                      caption, fmt_db, section_title)
 
 
 class EnumBinding:
@@ -47,8 +49,10 @@ class OutputRoutingPanel(QWidget):
         self._bindings: dict[int, EnumBinding] = {}
 
         root = QVBoxLayout(self)
-        preset = QToolButton()
-        preset.setText("Routing Preset\u2026")
+        root.setContentsMargins(0, theme.S2, 0, 0)
+        # Shown in the corner of the tab bar by the main window.
+        self.corner = preset = QToolButton()
+        preset.setText("Routing preset")
         preset.setPopupMode(QToolButton.InstantPopup)
         menu = QMenu(preset)
         for title, hint, fn in (
@@ -66,22 +70,12 @@ class OutputRoutingPanel(QWidget):
         scroll = FitScrollArea()
         inner = QWidget()
         grid = QGridLayout(inner)
-        grid.setHorizontalSpacing(6)
-        grid.setVerticalSpacing(5)
-        last_col = self.COLUMNS * 2
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(theme.S2)
+        grid.setVerticalSpacing(theme.S1 + 2)
         row = 0
         for title, outputs in self._groups():
-            if row:
-                line = QFrame()
-                line.setFrameShape(QFrame.HLine)
-                line.setFrameShadow(QFrame.Sunken)
-                grid.addWidget(line, row, 0, 1, last_col + 1)
-                row += 1
-            head = QLabel(title)
-            font = head.font()
-            font.setBold(True)
-            head.setFont(font)
-            grid.addWidget(head, row, 0, Qt.AlignLeft | Qt.AlignVCenter)
+            grid.addWidget(section_title(title), row, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
             cells = []
             for o in outputs:
@@ -92,28 +86,26 @@ class OutputRoutingPanel(QWidget):
                         continue
                     if hp:
                         # Say what it is first, and which line output it shares second.
-                        cells.append((f"Headphones {hp} {side}", label, e))
+                        cells.append((f"Phones {hp} {side}", label, e))
                     else:
-                        cells.append((label, "", e))
+                        cells.append((label.replace(" Output", ""), "", e))
             for i, (label, also, e) in enumerate(cells):
                 r, col = row + i // self.COLUMNS, 1 + (i % self.COLUMNS) * 2
+                text = caption(label)
+                text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+                text.setToolTip(f"Shares its signal with {also}" if also else "")
+                grid.addWidget(text, r, col)
                 bind = EnumBinding(device, e, f"{label} source")
                 bind.combo.setSizeAdjustPolicy(ItemCombo.AdjustToMinimumContentsLengthWithIcon)
-                bind.combo.setMinimumContentsLength(8)
-                self._bindings[e.numid] = bind
-                grid.addWidget(bind.combo, r, col)
-                text = QLabel(f"\u2192 {label}"
-                              + (f"<br><small>&nbsp;&nbsp;&nbsp;&nbsp;{also}</small>" if also else ""))
+                bind.combo.setMinimumContentsLength(7)
+                bind.combo.setMaximumWidth(190)
                 if also:
-                    text.setToolTip(f"The headphone socket plays the same signal as {also}")
-                grid.addWidget(text, r, col + 1)
-            if not row:
-                # As in the original, the preset menu shares the monitor outputs' row.
-                grid.addWidget(preset, 0, last_col - 1, 1, 2, Qt.AlignRight)
+                    bind.combo.setToolTip(f"Headphone socket; the same signal as {also}")
+                self._bindings[e.numid] = bind
+                grid.addWidget(bind.combo, r, col + 1)
             row += max(1, (len(cells) + self.COLUMNS - 1) // self.COLUMNS)
         grid.setRowStretch(row, 1)
-        for i in range(self.COLUMNS):
-            grid.setColumnStretch(1 + i * 2, 1)
+        grid.setColumnStretch(self.COLUMNS * 2 + 1, 1)      # spare width goes to the right
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
         device.add_listener(self._changed)
@@ -177,26 +169,30 @@ class CaptureRoutingPanel(QWidget):
         self.device = device
         self._bindings: dict[int, EnumBinding] = {}
         root = QVBoxLayout(self)
-        bar = QHBoxLayout()
-        reset = QPushButton("Reset to hardware inputs")
+        root.setContentsMargins(0, theme.S2, 0, 0)
+        # Shown in the corner of the tab bar by the main window.
+        self.corner = reset = QToolButton()
+        reset.setText("Reset to inputs")
         reset.setToolTip("Record each hardware input on the capture channel with the same position")
         reset.clicked.connect(self.reset)
-        bar.addWidget(reset)
-        bar.addStretch(1)
-        root.addLayout(bar)
         scroll = FitScrollArea()
         inner = QWidget()
         grid = QGridLayout(inner)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(theme.S2)
+        grid.setVerticalSpacing(theme.S1 + 2)
         rows = (len(device.capture) + self.COLUMNS - 1) // self.COLUMNS
         for i, e in enumerate(device.capture):
             bind = EnumBinding(device, e, f"DAW input {i + 1} source")
             self._bindings[e.numid] = bind
             r, c = i % rows, (i // rows) * 2
-            grid.addWidget(bind.combo, r, c)
-            grid.addWidget(QLabel(f"\u2192 DAW Input {i + 1}"), r, c + 1)
+            text = caption(f"DAW {i + 1}")
+            text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid.addWidget(text, r, c)
+            bind.combo.setMaximumWidth(190)
+            grid.addWidget(bind.combo, r, c + 1)
         grid.setRowStretch(rows, 1)
-        for c in range(self.COLUMNS):
-            grid.setColumnStretch(c * 2, 1)
+        grid.setColumnStretch(self.COLUMNS * 2, 1)
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
         device.add_listener(lambda e: self._bindings[e.numid].sync()
@@ -222,11 +218,11 @@ class LevelStrip(QFrame):
         super().__init__(parent)
         self.device, self.volume, self.switch = device, volume, switch
         self._on_knob = False
-        self.setFrameShape(QFrame.StyledPanel)
+        self.setObjectName("strip")
         self.setMinimumWidth(96)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(5)
+        lay.setContentsMargins(theme.S2, theme.S2, theme.S2, theme.S2)
+        lay.setSpacing(theme.S1 + 1)
 
         head = QLabel(title)
         head.setAlignment(Qt.AlignCenter)
@@ -304,10 +300,12 @@ class OutputsPage(QWidget):
         super().__init__(parent)
         self._strips: dict[int, LevelStrip] = {}
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, theme.S2, 0, 0)
         scroll = FitScrollArea()
         inner = QWidget()
         row = QHBoxLayout(inner)
-        row.setSpacing(4)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(theme.S1 + 2)
 
         def add(strip: LevelStrip) -> None:
             row.addWidget(strip)
@@ -382,7 +380,7 @@ class InputsPage(QWidget):
 class OutputStateButton(QPushButton):
     """One of the monitor section's output buttons: blue, silver or red."""
 
-    COLORS = {BLUE: "#4a90d9", SILVER: "#b8bcc2", RED: "#d9534f"}
+    COLORS = {BLUE: theme.MONITOR_BLUE, SILVER: theme.MONITOR_SILVER, RED: theme.MUTE}
     MEANING = {BLUE: "in the monitor group (knob, Mute and Dim)",
                SILVER: "independent of the monitor section",
                RED: "muted"}
@@ -392,7 +390,7 @@ class OutputStateButton(QPushButton):
     def __init__(self, index: int, title: str, parent: QWidget | None = None):
         super().__init__(str(index + 1), parent)
         self.index, self.title, self.state = index, title, SILVER
-        self.setFixedSize(34, 28)
+        self.setFixedSize(34, 30)
         self.clicked.connect(self._clicked)
         self.set_state(SILVER)
 
@@ -405,8 +403,9 @@ class OutputStateButton(QPushButton):
             ink = "#666" if state == SILVER else color
             look = f"background-color: transparent; color: {ink}; border: 2px solid {color};"
         else:
-            look = f"background-color: {color}; color: #111; border: 1px solid #555;"
-        self.setStyleSheet(f"QPushButton {{ {look} font-weight: bold; border-radius: 4px; }}")
+            look = f"background-color: {color}; color: #111; border: 1px solid {color};"
+        self.setStyleSheet(f"QPushButton {{ {look} font-weight: 600; padding: 0;"
+                           f" border-radius: {theme.RADIUS}px; }}")
         self.setToolTip(f"{self.title}: {self.MEANING[state]}."
                         + ("\nNot saved to hardware." if unsaved else "")
                         + "\nClick to change: monitor group, independent, muted.")
@@ -423,6 +422,13 @@ class OutputStateButton(QPushButton):
 class MonitorPanel(QWidget):
     """Front-panel readout, Dim and Mute, and the ten output buttons."""
 
+    LEGEND = ("<b>Output buttons</b><br>"
+              "Blue: in the monitor group (the knob, Mute and Dim act on it)<br>"
+              "Silver: independent, at full level<br>"
+              "Red: muted<br>"
+              "Outline: not saved to hardware<br><br>"
+              "Click a button to move it to the next state.")
+
     changed = Signal()          # the user changed something here
     message = Signal(str)       # something worth telling the user
 
@@ -433,14 +439,35 @@ class MonitorPanel(QWidget):
         self._unsaved = [False] * len(monitor.channels)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(theme.S2)
 
-        self.knob = QLabel("Knob")
+        head = QHBoxLayout()
+        head.addWidget(section_title("Monitor"))
+        head.addStretch(1)
+        help_button = QToolButton()
+        help_button.setText("?")
+        help_button.setObjectName("help")
+        help_button.setToolTip(self.LEGEND)
+        help_button.clicked.connect(
+            lambda: QToolTip.showText(help_button.mapToGlobal(help_button.rect().bottomLeft()),
+                                      self.LEGEND, help_button))
+        head.addWidget(help_button)
+        lay.addLayout(head)
+
+        self.knob = QLabel("\u2013")
+        self.knob.setObjectName("knobValue")
+        font = self.knob.font()
+        font.setPointSizeF(font.pointSizeF() * 1.7)
+        self.knob.setFont(font)
         self.knob.setAlignment(Qt.AlignCenter)
         self.knob.setToolTip("Position of the monitor knob on the front panel")
         lay.addWidget(self.knob)
+        knob_caption = caption("monitor knob")
+        knob_caption.setAlignment(Qt.AlignCenter)
+        lay.addWidget(knob_caption)
 
         row = QHBoxLayout()
-        self.dim = ToggleButton("Dim", "#e0a800", "Dim: the same as the front-panel button")
+        self.dim = ToggleButton("Dim", theme.DIM, "Dim: the same as the front-panel button")
         self.mute = ToggleButton("Mute", MUTE_COLOR, "Mute: the same as the front-panel button")
         self.dim.clicked.connect(lambda on: device.write(device.hw_dim, [int(on)]))
         self.mute.clicked.connect(lambda on: device.write(device.hw_mute, [int(on)]))
@@ -450,13 +477,13 @@ class MonitorPanel(QWidget):
         self.mono = self.pad = None
         extras = QHBoxLayout()
         if device.hw_mono:
-            self.mono = ToggleButton("Mono", "#5b9bd5",
+            self.mono = ToggleButton("Mono", theme.LINK,
                                      "Mono: blue output pairs play left and right summed")
             self.mono.setChecked(monitor.mono)
             self.mono.clicked.connect(self._mono_clicked)
             extras.addWidget(self.mono)
         if device.hw_pad:
-            self.pad = ToggleButton("Pad", "#e0a800",
+            self.pad = ToggleButton("Pad", theme.DIM,
                                     "Pad: makes the main monitor outputs quieter "
                                     "(labelled -20 dB in the original)")
             self.pad.setChecked(monitor.pad)
@@ -466,7 +493,7 @@ class MonitorPanel(QWidget):
             lay.addLayout(extras)
 
         grid = QGridLayout()
-        grid.setSpacing(4)
+        grid.setSpacing(theme.S1 + 1)
         self.buttons = []
         for i, (output, side) in enumerate(monitor.channels):
             name = names.output_channels(output.label)[side]
@@ -478,8 +505,9 @@ class MonitorPanel(QWidget):
         lay.addLayout(grid)
         if monitor.presets():
             preset = QToolButton()
-            preset.setText("Monitor Preset\u2026")
+            preset.setText("Presets")
             preset.setPopupMode(QToolButton.InstantPopup)
+            preset.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             preset.setToolButtonStyle(Qt.ToolButtonTextOnly)
             preset.setToolTip("Choose which outputs are in the monitor group; the rest "
                               "become independent")
@@ -488,11 +516,7 @@ class MonitorPanel(QWidget):
                 menu.addAction(f"{name}  ({', '.join(map(str, outs))})",
                                lambda outs=outs: self._use_preset(outs))
             preset.setMenu(menu)
-            lay.addWidget(preset, 0, Qt.AlignHCenter)
-        hint = QLabel("<small>blue: monitor group (knob, Mute, Dim)<br>silver: independent"
-                      "<br>red: muted<br>outline: not saved to hardware</small>")
-        hint.setAlignment(Qt.AlignCenter)
-        lay.addWidget(hint)
+            lay.addWidget(preset)
         self.sync()
 
     def sync(self) -> None:
@@ -557,6 +581,6 @@ class MonitorPanel(QWidget):
         interface does not move by itself yet."""
         self._knob = knob
         self.monitor.follow(knob)
-        self.knob.setText("Knob  " + ("-\u221e" if knob >= 127 else f"{-knob:+d} dB" if knob else "0 dB"))
+        self.knob.setText("\u2212\u221e" if knob >= 127 else f"\u2212{knob} dB" if knob else "0 dB")
         self.mute.setChecked(mute)
         self.dim.setChecked(dim)

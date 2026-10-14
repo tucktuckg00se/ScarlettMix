@@ -97,6 +97,8 @@ def main(argv=None) -> int:
 
     app = QApplication(sys.argv[:1])
     app.setApplicationName("ScarlettMix")
+    from .ui import theme
+    theme.apply(app)
     app.setDesktopFileName("scarlettmix")
     if backend is None:
         box = QMessageBox(QMessageBox.Warning, "ScarlettMix",

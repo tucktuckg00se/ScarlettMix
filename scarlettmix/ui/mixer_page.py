@@ -9,10 +9,11 @@ from PySide6.QtWidgets import (QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLa
 from .. import names
 from ..device import Device
 from ..mixer import Mix, MixController
+from . import theme
 from .widgets import (MUTE_COLOR, SOLO_COLOR, Fader, FitScrollArea, ItemCombo, MarkCheckBox,
-                      MarkSlider, ToggleButton, fmt_db)
+                      MarkSlider, ToggleButton, caption, fmt_db)
 
-STRIP_WIDTH = 92
+STRIP_WIDTH = 86
 
 
 def strip_width(widget: QWidget) -> int:
@@ -25,7 +26,7 @@ def fmt_pan(pan: float) -> str:
     return "C" if v == 0 else (f"L{-v}" if v < 0 else f"R{v}")
 
 
-LINK_COLOR = "#5b9bd5"
+LINK_COLOR = theme.LINK
 
 
 class ChannelStrip(QFrame):
@@ -41,13 +42,17 @@ class ChannelStrip(QFrame):
         self.device = device
         self.linked = len(indices) == 2
         self.routes = [device.matrix_inputs[i] for i in indices]
-        self.setFrameShape(QFrame.StyledPanel)
+        self.setObjectName("strip")
         self.setFixedWidth(strip_width(self) * len(indices))
         label = "/".join(str(i + 1) for i in indices)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(5, 6, 5, 6)
-        lay.setSpacing(5)
+        lay.setContentsMargins(theme.S2 - 2, theme.S2 - 2, theme.S2 - 2, theme.S2)
+        lay.setSpacing(theme.S1 + 1)
+
+        self.number = caption(("Inputs " if self.linked else "Input ") + label)
+        self.number.setAlignment(Qt.AlignCenter)
+        lay.addWidget(self.number)
 
         sources = QHBoxLayout()
         sources.setSpacing(4)
@@ -106,12 +111,8 @@ class ChannelStrip(QFrame):
             lay.addWidget(self.link)
         else:
             spacer = QWidget()
-            spacer.setFixedHeight(24)
+            spacer.setFixedHeight(26)
             lay.addWidget(spacer)
-
-        self.number = QLabel(label)
-        self.number.setAlignment(Qt.AlignCenter)
-        lay.addWidget(self.number)
 
         self._strip = None
         for i in indices:
@@ -185,11 +186,11 @@ class MasterStrip(QFrame):
     def __init__(self, device: Device, parent: QWidget | None = None):
         super().__init__(parent)
         self.device = device
-        self.setFrameShape(QFrame.StyledPanel)
+        self.setObjectName("strip")
         self.setFixedWidth(strip_width(self) + 44)
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(6, 6, 6, 6)
-        lay.setSpacing(5)
+        lay.setContentsMargins(theme.S2, theme.S2, theme.S2, theme.S2)
+        lay.setSpacing(theme.S1 + 1)
 
         self.title = QLabel()
         self.title.setAlignment(Qt.AlignCenter)
@@ -231,7 +232,7 @@ class MasterStrip(QFrame):
         lay.addWidget(self.mute)
 
         self.copy = QToolButton()
-        self.copy.setText("Copy Mix To\u2026")
+        self.copy.setText("Copy to\u2026")
         self.copy.setPopupMode(QToolButton.InstantPopup)
         self.copy.setToolButtonStyle(Qt.ToolButtonTextOnly)
         self.copy.setSizePolicy(self.send.sizePolicy())
@@ -305,15 +306,17 @@ class MixerPage(QWidget):
         self._route_ids = {e.numid: i for i, e in enumerate(device.matrix_inputs)}
 
         root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(theme.S2)
 
         top = QHBoxLayout()
         self._selector_box = QHBoxLayout()
-        self._selector_box.setSpacing(4)
+        self._selector_box.setSpacing(0)
         self._group = QButtonGroup(self)
         self._group.setExclusive(True)
         top.addLayout(self._selector_box)
         top.addSpacing(16)
-        self.stereo = MarkCheckBox("Stereo mix")
+        self.stereo = MarkCheckBox("Stereo pair")
         self.stereo.setToolTip("Link this mix with its neighbour as a left/right pair with pan controls")
         self.stereo.toggled.connect(self._stereo_toggled)
         top.addWidget(self.stereo)
@@ -326,13 +329,14 @@ class MixerPage(QWidget):
         inner = QWidget()
         row = QHBoxLayout(inner)
         row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(4)
+        row.setSpacing(theme.S1 + 2)
         self._row = row
         self.strips: list[ChannelStrip] = []
         row.addStretch(1)
         scroll.setWidget(inner)
 
         body = QHBoxLayout()
+        body.setSpacing(theme.S2)
         body.addWidget(scroll, 1)
         self.master = MasterStrip(device)
         self.master.edited.connect(self._edited)
@@ -380,8 +384,11 @@ class MixerPage(QWidget):
         model = self.controller.model
         current = self.current_mix()
         self._mix_buttons = []
-        for mix in model.mixes:
+        for n, mix in enumerate(model.mixes):
             b = QPushButton(names.mix(mix.buses))
+            b.setObjectName("segment")
+            b.setProperty("first", n == 0)
+            b.setProperty("last", n == len(model.mixes) - 1)
             self._mix_buttons.append((b, mix))
             b.setCheckable(True)
             b.setChecked(mix is current)

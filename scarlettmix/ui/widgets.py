@@ -4,15 +4,17 @@ from __future__ import annotations
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QPushButton, QScrollArea,
+from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QLabel, QPushButton, QScrollArea,
                                QSizePolicy, QSlider, QWidget)
 
 from .. import laws, names
 
-MUTE_COLOR = "#d9534f"
-SOLO_COLOR = "#e0a800"
+from . import theme
+
+MUTE_COLOR = theme.MUTE
+SOLO_COLOR = theme.SOLO
 # Not saved to hardware: drawn as an outline. Saved: drawn solid.
-UNSAVED_COLOR = "#c77700"
+UNSAVED_COLOR = theme.UNSAVED
 UNSAVED_TIP = "Not saved to hardware: lost when the interface is switched off."
 
 
@@ -81,7 +83,7 @@ class Fader(QWidget):
         self._unsaved = False
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self.setMinimumHeight(170)
+        self.setMinimumHeight(110)
 
     def sizeHint(self) -> QSize:
         return QSize(58 + int(self._meter_w), 240)
@@ -271,7 +273,7 @@ class ToggleButton(QPushButton):
         self.setCheckable(True)
         self.setToolTip(tooltip)
         self.setAccessibleName(tooltip or text)
-        self.setFixedHeight(24)
+        self.setFixedHeight(26)
         # Same width whether drawn solid or as an outline (the two styles have
         # different natural sizes): share the row equally instead.
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -287,12 +289,14 @@ class ToggleButton(QPushButton):
         c = self._color
         if on:
             self.setStyleSheet(
-                "QPushButton { background-color: transparent; border: 2px solid #888;"
-                " border-radius: 4px; }"
-                f"QPushButton:checked {{ border: 2px solid {c}; color: {c}; font-weight: bold; }}")
+                "QPushButton { background-color: transparent; border: 2px solid #8a8f96;"
+                f" border-radius: {theme.RADIUS}px; padding: 2px 6px; }}"
+                f"QPushButton:checked {{ border: 2px solid {c}; color: {c}; font-weight: 600; }}")
         else:
             self.setStyleSheet(
-                f"QPushButton:checked {{ background-color: {c}; color: #111; font-weight: bold; }}")
+                f"QPushButton {{ padding: 3px 6px; }}"
+                f"QPushButton:checked {{ background-color: {c}; color: #111; border-color: {c};"
+                " font-weight: 600; }")
 
     def unsaved(self) -> bool:
         return bool(self._unsaved)
@@ -331,3 +335,22 @@ class FitScrollArea(QScrollArea):
             return super().sizeHint()
         bar = self.style().pixelMetric(self.style().PixelMetric.PM_ScrollBarExtent)
         return inner.sizeHint() + QSize(bar + 4, bar + 4)
+
+
+def section_title(text: str) -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("sectionTitle")
+    return label
+
+
+def caption(text: str = "") -> QLabel:
+    label = QLabel(text)
+    label.setObjectName("caption")
+    return label
+
+
+def card(name: str = "card") -> QFrame:
+    """A rounded panel that groups related controls (styled by the theme)."""
+    frame = QFrame()
+    frame.setObjectName(name)
+    return frame
