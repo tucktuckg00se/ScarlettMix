@@ -12,8 +12,8 @@ from ..alsa import TYPE_ENUMERATED, ElemInfo
 from ..device import Device, db_to_level, level_to_db
 from ..monitor import BLUE, RED, SILVER, Monitor
 from . import theme
-from .widgets import (MUTE_COLOR, Fader, FitScrollArea, ItemCombo, MarkCheckBox, ToggleButton,
-                      caption, fmt_db, section_title)
+from .widgets import (MUTE_COLOR, Fader, FitScrollArea, GroupedCombo, ItemCombo, MarkCheckBox,
+                      ToggleButton, caption, card, fmt_db, section_title)
 
 
 class EnumBinding:
@@ -37,16 +37,136 @@ class EnumBinding:
         return on
 
 
-class OutputRoutingPanel(QWidget):
-    """Source selector for every physical output, in the original's grid:
-    monitor outputs first, then line, ADAT and S/PDIF outputs four to a row."""
+def _channel_entries(items: list[str]) -> list[tuple[str, str, str]]:
+    """Single source channels for a selector, grouped like the pairs."""
+    heading = {"PCM": "From the computer", "Mix": "Mixes", "Analog": "Inputs",
+               "SPDIF": "Inputs", "ADAT": "Inputs"}
+    return [("" if i == "Off" else heading.get(i.split(" ")[0], ""), names.channel(i), i)
+            for i in items]
 
-    COLUMNS = 4
+
+class PairRow(QWidget):
+    """One stereo destination: what it is, one selector for a stereo source,
+    and (behind the L/R button) a selector for each side."""
+
+    def __init__(self, device: Device, name: str, socket: str, left: ElemInfo,
+                 right: ElemInfo | None, tip: str = "", parent: QWidget | None = None):
+        super().__init__(parent)
+        self.device, self.left, self.right = device, left, right
+        self.elems = [e for e in (left, right) if e]
+        grid = QGridLayout(self)
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(theme.S2)
+        grid.setVerticalSpacing(theme.S1)
+
+        # One line: what it is, then (muted) which sockets it shares.
+        names_box = QHBoxLayout()
+        names_box.setSpacing(theme.S2)
+        self.name = QLabel(name)
+        names_box.addWidget(self.name)
+        if socket:
+            names_box.addWidget(caption(socket))
+        names_box.addStretch(1)
+        self.names = QWidget()
+        self.names.setLayout(names_box)
+        names_box.setContentsMargins(0, 0, 0, 0)
+        self.names.setToolTip(tip)
+        grid.addWidget(self.names, 0, 0, Qt.AlignVCenter)
+
+        self.pair = GroupedCombo()
+        self.pair.setAccessibleName(f"{name} source")
+        self.pair.setToolTip(tip)
+        self.pair.set_entries([(h, t, f"{l}|{r}") for h, t, (l, r) in names.source_pairs(left.items)])
+        self.pair.picked.connect(self._pair_picked)
+        grid.addWidget(self.pair, 0, 1)
+
+        self.split = QToolButton()
+        self.split.setObjectName("split")
+        self.split.setText("L/R")
+        self.split.setCheckable(True)
+        self.split.setToolTip("Choose the left and right source separately")
+        grid.addWidget(self.split, 0, 2)
+
+        self.sides = QWidget()
+        sides = QHBoxLayout(self.sides)
+        sides.setContentsMargins(0, 0, 0, 0)
+        sides.setSpacing(theme.S1 + 2)
+        self.side_combos = []
+        for tag, e in zip("LR", (left, right)):
+            if not e:
+                continue
+            sides.addWidget(caption(tag))
+            combo = GroupedCombo()
+            combo.setAccessibleName(f"{name} {'left' if tag == 'L' else 'right'} source")
+            combo.set_entries(_channel_entries(e.items))
+            combo.picked.connect(lambda item, e=e: self.device.set_item(e, item))
+            sides.addWidget(combo, 1)
+            self.side_combos.append((e, combo))
+        grid.addWidget(self.sides, 1, 1, 1, 2)
+        self.sides.hide()
+        self.split.toggled.connect(self.sides.setVisible)
+        self.sync()
+        # A left/right choice that is not a stereo pair starts out shown in
+        # full, so nothing is hidden behind the button.
+        if not names.pair_name(*self._items(), self.left.items)[1]:
+            self.split.setChecked(True)
+
+    def _items(self) -> tuple[str, str]:
+        items = [self.device.item(e) for e in self.elems]
+        return items[0], items[-1]
+
+    def sync(self) -> None:
+        items = [self.device.item(e) for e in self.elems]
+        left, right = items[0], items[-1]
+        shown, is_pair = names.pair_name(left, right, self.left.items)
+        self.pair.select(f"{left}|{right}", "" if is_pair else shown)
+        for (e, combo), item in zip(self.side_combos, items):
+            combo.select(item)
+
+    def _pair_picked(self, key: str) -> None:
+        left, right = key.split("|")
+        self.device.set_item(self.left, left)
+        if self.right:
+            self.device.set_item(self.right, right)
+
+    def mark(self, saved) -> bool:
+        flags = [saved.control(e) for e in self.elems]
+        self.pair.setUnsaved(any(flags))
+        for (e, combo), flag in zip(self.side_combos, flags):
+            combo.setUnsaved(flag)
+        return any(flags)
+
+
+def _pair_card(title: str, rows: list[PairRow], columns: int = 1) -> QFrame:
+    """Rows of destinations in a titled panel; the names line up in a column."""
+    frame = card()
+    lay = QVBoxLayout(frame)
+    lay.setContentsMargins(theme.S3, theme.S2, theme.S3, theme.S3)
+    lay.setSpacing(theme.S2)
+    lay.addWidget(section_title(title))
+    grid = QGridLayout()
+    grid.setHorizontalSpacing(theme.S4)
+    grid.setVerticalSpacing(theme.S2)
+    per_column = (len(rows) + columns - 1) // columns
+    width = max(r.names.sizeHint().width() for r in rows) if rows else 0
+    for i, row in enumerate(rows):
+        row.names.setFixedWidth(width)
+        row.pair.setMinimumWidth(row.pair.fontMetrics().horizontalAdvance("Analog in 7/8") + 40)
+        grid.addWidget(row, i % per_column, i // per_column)
+    lay.addLayout(grid)
+    lay.addStretch(1)
+    return frame
+
+
+class OutputRoutingPanel(QWidget):
+    """What each physical output plays, one row per stereo pair, as on the
+    back panel: analogue outputs (with the headphone sockets that share
+    them) and digital outputs."""
 
     def __init__(self, device: Device, parent: QWidget | None = None):
         super().__init__(parent)
         self.device = device
-        self._bindings: dict[int, EnumBinding] = {}
+        self._rows: dict[int, PairRow] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, theme.S2, 0, 0)
@@ -57,8 +177,8 @@ class OutputRoutingPanel(QWidget):
         menu = QMenu(preset)
         for title, hint, fn in (
             ("Clear", "Turn every output off", self.preset_clear),
-            ("DAW Tracking", "DAW 1 and 2 to every analogue output pair", self.preset_daw_tracking),
-            ("Zero Latency Tracking", "Mix 1 and 2 to every analogue output pair",
+            ("DAW Tracking", "DAW 1/2 to every analogue output pair", self.preset_daw_tracking),
+            ("Zero Latency Tracking", "Mix 1/2 to every analogue output pair",
              self.preset_zero_latency),
             ("Mixing", "Each output plays the DAW channel with the same number", self.preset_mixing),
         ):
@@ -67,59 +187,39 @@ class OutputRoutingPanel(QWidget):
         menu.setToolTipsVisible(True)
         preset.setMenu(menu)
 
+        usb = device.backend.usb_id
+        cards = QHBoxLayout()
+        cards.setSpacing(theme.S3)
+        groups = dict(self._groups())
+        for heading, kinds in (("Analogue outputs", ("Monitor", "Line", "Headphones")),
+                               ("Digital outputs", ("S/PDIF", "ADAT"))):
+            rows = []
+            for kind in kinds:
+                for o in groups.get(kind, []):
+                    if not o.source_l:
+                        continue
+                    name, socket = names.output_title(o.label, usb)
+                    tip = (f"The {name.lower()} socket plays the same signal as {socket}"
+                           if device.headphones(o) else "")
+                    row = PairRow(device, name, socket if socket.startswith("Line") else "",
+                                  o.source_l, o.source_r, tip)
+                    rows.append(row)
+                    for e in row.elems:
+                        self._rows[e.numid] = row
+            if rows:
+                cards.addWidget(_pair_card(heading, rows))
+        cards.addStretch(1)
         scroll = FitScrollArea()
         inner = QWidget()
-        grid = QGridLayout(inner)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(theme.S2)
-        grid.setVerticalSpacing(theme.S1 + 2)
-        row = 0
-        labels = []
-        for title, outputs in self._groups():
-            grid.addWidget(section_title(title), row, 0, Qt.AlignLeft | Qt.AlignVCenter)
-
-            cells = []
-            for o in outputs:
-                hp = device.headphones(o)
-                plain = names.output_channels(o.label)
-                for side, label, e in zip("LR", plain, (o.source_l, o.source_r)):
-                    if not e:
-                        continue
-                    if hp:
-                        # Say what it is first, and which line output it shares second.
-                        cells.append((f"Phones {hp} {side}", label, e))
-                    else:
-                        cells.append((label.replace(" Output", ""), "", e))
-            for i, (label, also, e) in enumerate(cells):
-                r, col = row + i // self.COLUMNS, 1 + (i % self.COLUMNS) * 2
-                text = caption(label)
-                text.setToolTip(f"Shares its signal with {also}" if also else "")
-                labels.append(text)
-                grid.addWidget(text, r, col)
-                bind = EnumBinding(device, e, f"{label} source")
-                bind.combo.setSizeAdjustPolicy(ItemCombo.AdjustToMinimumContentsLengthWithIcon)
-                bind.combo.setMinimumContentsLength(7)
-                bind.combo.setMaximumWidth(190)
-                if also:
-                    bind.combo.setToolTip(f"Headphone socket; the same signal as {also}")
-                self._bindings[e.numid] = bind
-                grid.addWidget(bind.combo, r, col + 1)
-            row += max(1, (len(cells) + self.COLUMNS - 1) // self.COLUMNS)
-        grid.setRowStretch(row, 1)
-        grid.setColumnStretch(self.COLUMNS * 2 + 1, 1)      # spare width goes to the right
-        # One label width for every column, so the selectors line up.
-        width = max(t.sizeHint().width() for t in labels) + theme.S2
-        for t in labels:
-            t.setFixedWidth(width)
-        grid.setColumnMinimumWidth(0, max(section_title(t).sizeHint().width()
-                                          for t, _ in self._groups()) + theme.S3)
+        inner.setLayout(cards)
+        cards.setContentsMargins(0, 0, 0, 0)
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
         device.add_listener(self._changed)
 
     def mark(self, saved) -> bool:
         """Outline what is not saved to hardware; True if anything here is."""
-        return any([b.mark(saved) for b in self._bindings.values()])
+        return any([r.mark(saved) for r in set(self._rows.values())])
 
     def _groups(self) -> list[tuple[str, list]]:
         """Output pairs under the headings shown, in the original's order with
@@ -141,8 +241,8 @@ class OutputRoutingPanel(QWidget):
                 if k in ("Monitor", "Line", "Headphones") for o in outs]
 
     def _changed(self, e: ElemInfo) -> None:
-        if b := self._bindings.get(e.numid):
-            b.sync()
+        if row := self._rows.get(e.numid):
+            row.sync()
 
     def _set_pairs(self, outputs: list, left: str, right: str) -> None:
         for o in outputs:
@@ -166,15 +266,13 @@ class OutputRoutingPanel(QWidget):
 
 
 class CaptureRoutingPanel(QWidget):
-    """What the computer records on each capture channel. The original keeps
-    this fixed; the hardware lets it be chosen, so it is offered here."""
-
-    COLUMNS = 3
+    """What the computer records on each capture channel, one row per pair.
+    The original keeps this fixed; the hardware lets it be chosen."""
 
     def __init__(self, device: Device, parent: QWidget | None = None):
         super().__init__(parent)
         self.device = device
-        self._bindings: dict[int, EnumBinding] = {}
+        self._rows: dict[int, PairRow] = {}
         root = QVBoxLayout(self)
         root.setContentsMargins(0, theme.S2, 0, 0)
         # Shown in the corner of the tab bar by the main window.
@@ -182,31 +280,29 @@ class CaptureRoutingPanel(QWidget):
         reset.setText("Reset to inputs")
         reset.setToolTip("Record each hardware input on the capture channel with the same position")
         reset.clicked.connect(self.reset)
+        rows = []
+        caps = device.capture
+        for i in range(0, len(caps), 2):
+            right = caps[i + 1] if i + 1 < len(caps) else None
+            label = f"DAW in {i + 1}/{i + 2}" if right else f"DAW in {i + 1}"
+            row = PairRow(device, label, "", caps[i], right,
+                          "What the computer records on these capture channels")
+            rows.append(row)
+            for e in row.elems:
+                self._rows[e.numid] = row
+        cards = QHBoxLayout()
+        cards.setContentsMargins(0, 0, 0, 0)
+        cards.addWidget(_pair_card("Recorded by the computer", rows, columns=2))
+        cards.addStretch(1)
         scroll = FitScrollArea()
         inner = QWidget()
-        grid = QGridLayout(inner)
-        grid.setContentsMargins(0, 0, 0, 0)
-        grid.setHorizontalSpacing(theme.S2)
-        grid.setVerticalSpacing(theme.S1 + 2)
-        rows = (len(device.capture) + self.COLUMNS - 1) // self.COLUMNS
-        for i, e in enumerate(device.capture):
-            bind = EnumBinding(device, e, f"DAW input {i + 1} source")
-            self._bindings[e.numid] = bind
-            r, c = i % rows, (i // rows) * 2
-            text = caption(f"DAW {i + 1}")
-            text.setFixedWidth(text.fontMetrics().horizontalAdvance("DAW 88") + theme.S2)
-            grid.addWidget(text, r, c)
-            bind.combo.setMaximumWidth(190)
-            grid.addWidget(bind.combo, r, c + 1)
-        grid.setRowStretch(rows, 1)
-        grid.setColumnStretch(self.COLUMNS * 2, 1)
+        inner.setLayout(cards)
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
-        device.add_listener(lambda e: self._bindings[e.numid].sync()
-                            if e.numid in self._bindings else None)
+        device.add_listener(lambda e: self._rows[e.numid].sync() if e.numid in self._rows else None)
 
     def mark(self, saved) -> bool:
-        return any([b.mark(saved) for b in self._bindings.values()])
+        return any([r.mark(saved) for r in set(self._rows.values())])
 
     def reset(self) -> None:
         for i, e in enumerate(self.device.capture):
@@ -320,9 +416,9 @@ class OutputsPage(QWidget):
 
         for o in device.outputs:
             if o.volume or o.switch:
-                hp = device.headphones(o)
-                add(LevelStrip(device, f"Headphones {hp}" if hp else o.label, o.volume, o.switch,
-                               subtitle=o.label if hp else ""))
+                name, socket = names.output_title(o.label, device.backend.usb_id)
+                add(LevelStrip(device, name, o.volume, o.switch,
+                               subtitle=socket if socket.startswith("Line") else ""))
         row.addStretch(1)
         scroll.setWidget(inner)
         root.addWidget(scroll)

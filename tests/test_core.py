@@ -256,8 +256,21 @@ def test_original_names(device):
     assert names.source("PCM 7") == "DAW 7" and names.source("Mix C") == "Mix 3"
     assert names.source("Analog 2") == "Analog 2"
     labels = [l for l, _ in device.output_sources()]
-    assert labels[:3] == ["Monitor Output 1", "Monitor Output 2", "Line Output 3"]
-    assert labels[10:12] == ["SPDIF Output 1", "SPDIF Output 2"] and labels[-1] == "ADAT Output 8"
+    assert labels[:3] == ["Line out 1", "Line out 2", "Line out 3"]
+    assert labels[10:12] == ["S/PDIF out L", "S/PDIF out R"] and labels[-1] == "ADAT out 8"
+    u = device.backend.usb_id
+    assert [names.output_title(o.label, u) for o in device.outputs[:6]] == [
+        ("Main monitors", "Line out 1/2"), ("Line out 3/4", ""), ("Line out 5/6", ""),
+        ("Headphones 1", "Line out 7/8"), ("Headphones 2", "Line out 9/10"), ("S/PDIF out", "coaxial")]
+    assert names.output_title("ADAT 5/6", u) == ("ADAT out 5/6", "optical")
+    items = device.outputs[0].source_l.items
+    pairs = names.source_pairs(items)
+    assert pairs[0] == ("", "Off", ("Off", "Off")) and len(pairs) == 24
+    assert ("Mixes", "Mix 3/4", ("Mix C", "Mix D")) in pairs
+    assert ("Inputs", "S/PDIF in", ("SPDIF 1", "SPDIF 2")) in pairs
+    assert names.pair_name("PCM 3", "PCM 4", items) == ("DAW 3/4", True)
+    assert names.pair_name("PCM 4", "PCM 3", items) == ("DAW 4 + DAW 3", False)
+    assert names.channel("Analog 5") == "Analog in 5" and names.channel("SPDIF 2") == "S/PDIF in R"
     by_label = {o.label: o for o in device.outputs}
     assert device.headphones(by_label["Line 7/8"]) == 1
     assert device.headphones(by_label["Line 9/10"]) == 2

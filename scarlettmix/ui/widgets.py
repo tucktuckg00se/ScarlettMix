@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSignalBlocker, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QFontMetrics, QPainter, QPalette, QPen
 from PySide6.QtWidgets import (QCheckBox, QComboBox, QFrame, QLabel, QPushButton, QScrollArea,
                                QSizePolicy, QSlider, QWidget)
@@ -314,6 +314,59 @@ class ToggleButton(QPushButton):
 
     def unsaved(self) -> bool:
         return bool(self._unsaved)
+
+
+class GroupedCombo(Outlined, QComboBox):
+    """Selector with entries grouped under headings that cannot be chosen.
+    Each entry carries a string key; ``picked`` fires for user choices only."""
+
+    picked = Signal(str)
+    CUSTOM = "__custom__"
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setFocusPolicy(Qt.StrongFocus)
+        self.setMaxVisibleItems(30)
+        self.activated.connect(self._activated)
+
+    def set_entries(self, entries: list[tuple[str, str, str]]) -> None:
+        """(heading, text, key) in order; a new heading starts a group."""
+        self.clear()
+        last = None
+        for heading, text, key in entries:
+            if heading and heading != last:
+                self.addItem(heading)
+                item = self.model().item(self.count() - 1)
+                item.setFlags(Qt.NoItemFlags)
+                font = item.font()
+                font.setBold(True)
+                font.setPointSizeF(font.pointSizeF() * 0.9)
+                item.setFont(font)
+                last = heading
+            self.addItem(text, key)
+
+    def select(self, key: str, custom_text: str = "") -> None:
+        """Show the entry with this key; with ``custom_text``, show that
+        instead as a temporary first entry (a choice not on the list)."""
+        with QSignalBlocker(self):
+            if self.itemData(0) == self.CUSTOM:
+                self.removeItem(0)
+            if custom_text:
+                self.insertItem(0, custom_text, self.CUSTOM)
+                self.setCurrentIndex(0)
+            else:
+                self.setCurrentIndex(max(0, self.findData(key)))
+
+    def _activated(self, index: int) -> None:
+        key = self.itemData(index)
+        if key and key != self.CUSTOM:
+            self.picked.emit(key)
+
+    def wheelEvent(self, ev) -> None:
+        if self.hasFocus():
+            super().wheelEvent(ev)
+        else:
+            ev.ignore()
 
 
 class ItemCombo(Outlined, QComboBox):

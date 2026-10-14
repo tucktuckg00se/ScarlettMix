@@ -307,8 +307,8 @@ class MasterStrip(QFrame):
                 act.setChecked(sent)
             if sent:
                 hp = self.device.headphones(o)
-                on.append(f"Headphones {hp}" if hp else o.label)
-                short.append(f"HP {hp}" if hp else o.label.replace("Monitor", "Mon"))
+                on.append(names.output_title(o.label, self.device.backend.usb_id)[0])
+                short.append(f"Phones {hp}" if hp else o.label.replace("Monitor", "Main"))
         brief = ", ".join(short)
         if len(brief) > 14:
             brief = f"{len(short)} outputs"
