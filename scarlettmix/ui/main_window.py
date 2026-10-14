@@ -73,6 +73,10 @@ class MainWindow(QMainWindow):
         self._mark_timer = QTimer(self, singleShot=True, interval=40)
         self._mark_timer.timeout.connect(self._update_saved)
 
+        bar = self.statusBar()
+        bar.setSizeGripEnabled(False)
+        bar.messageChanged.connect(lambda text: bar.setVisible(bool(text)))
+        bar.hide()
         self.load_backend(backend)
         self.fit_to_contents()
 
@@ -178,6 +182,9 @@ class MainWindow(QMainWindow):
         left.setChildrenCollapsible(False)
         root.addWidget(left, 1)
         self.setCentralWidget(central)
+        # Start with nothing focused, rather than a focus ring on the first selector.
+        central.setFocusPolicy(Qt.ClickFocus)
+        central.setFocus()
         # The routing area gets the height the routing grid needs, the mixer
         # the rest (the other tabs scroll or shrink within that height).
         self._left = left
@@ -199,10 +206,7 @@ class MainWindow(QMainWindow):
         self._poll_status()
         if backend.simulated:
             self.statusBar().showMessage("Simulated device: nothing here reaches real hardware.")
-        elif self.controller.restored:
-            self.statusBar().showMessage("Restored mixer layout from the last session.", 5000)
-        else:
-            self.statusBar().showMessage("Read current settings from the device.", 5000)
+
 
     def fit_to_contents(self) -> None:
         """Open large enough to show every strip and routing row without
@@ -288,6 +292,7 @@ class MainWindow(QMainWindow):
         d = self.device
         bar = QHBoxLayout()
         bar.setSpacing(theme.S2)
+        bar.setAlignment(Qt.AlignVCenter)
         name = QLabel(d.model_name)
         name.setObjectName("deviceName")
         font = name.font()
@@ -307,7 +312,7 @@ class MainWindow(QMainWindow):
         chip = QFrame()
         chip.setObjectName("chip")
         chip_lay = QHBoxLayout(chip)
-        chip_lay.setContentsMargins(theme.S2 + 2, 1, theme.S2 + 2, 1)
+        chip_lay.setContentsMargins(theme.S3, 0, theme.S3, 0)
         chip_lay.setSpacing(theme.S1 + 2)
         self.sync = QLabel()
         chip_lay.addWidget(self.sync)
@@ -316,6 +321,7 @@ class MainWindow(QMainWindow):
         self.rate.setToolTip("Sample rate of the running stream. On Linux this is chosen by the "
                              "audio server (PipeWire/JACK) or the application, not by the mixer.")
         chip_lay.addWidget(self.rate)
+        bar.addSpacing(theme.S1)
         bar.addWidget(chip)
         bar.addStretch(1)
         self.saved_label = QLabel()
@@ -332,6 +338,7 @@ class MainWindow(QMainWindow):
         for w in (self.saved_label, self.revert_button, self.save_button):
             w.setVisible(bool(d.hw_save))
             bar.addWidget(w)
+        bar.insertSpacing(bar.indexOf(self.revert_button), theme.S2)
         return bar
 
     def _update_saved(self) -> None:
@@ -489,7 +496,6 @@ class MainWindow(QMainWindow):
             self, "Now restart the interface",
             "Saved.\n\nNow switch the interface off and on.\n\nThe monitor knob only takes up "
             "its outputs when the interface starts, so a save is not finished until then.")
-        self.statusBar().showMessage("Saved to the interface. Switch it off and on to finish.", 10000)
         return True
 
     def revert_to_saved(self, confirm: bool = True) -> bool:

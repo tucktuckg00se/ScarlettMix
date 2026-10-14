@@ -18,7 +18,7 @@ scarlettmix = "scarlettmix.__main__:main"
 packages = ["scarlettmix", "scarlettmix.ui"]
 
 [tool.setuptools.package-data]
-scarlettmix = ["data/*.json"]
+scarlettmix = ["data/*.json", "ui/icons/*.svg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

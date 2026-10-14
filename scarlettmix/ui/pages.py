@@ -74,6 +74,7 @@ class OutputRoutingPanel(QWidget):
         grid.setHorizontalSpacing(theme.S2)
         grid.setVerticalSpacing(theme.S1 + 2)
         row = 0
+        labels = []
         for title, outputs in self._groups():
             grid.addWidget(section_title(title), row, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
@@ -92,8 +93,8 @@ class OutputRoutingPanel(QWidget):
             for i, (label, also, e) in enumerate(cells):
                 r, col = row + i // self.COLUMNS, 1 + (i % self.COLUMNS) * 2
                 text = caption(label)
-                text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 text.setToolTip(f"Shares its signal with {also}" if also else "")
+                labels.append(text)
                 grid.addWidget(text, r, col)
                 bind = EnumBinding(device, e, f"{label} source")
                 bind.combo.setSizeAdjustPolicy(ItemCombo.AdjustToMinimumContentsLengthWithIcon)
@@ -106,6 +107,12 @@ class OutputRoutingPanel(QWidget):
             row += max(1, (len(cells) + self.COLUMNS - 1) // self.COLUMNS)
         grid.setRowStretch(row, 1)
         grid.setColumnStretch(self.COLUMNS * 2 + 1, 1)      # spare width goes to the right
+        # One label width for every column, so the selectors line up.
+        width = max(t.sizeHint().width() for t in labels) + theme.S2
+        for t in labels:
+            t.setFixedWidth(width)
+        grid.setColumnMinimumWidth(0, max(section_title(t).sizeHint().width()
+                                          for t, _ in self._groups()) + theme.S3)
         scroll.setWidget(inner)
         root.addWidget(scroll, 1)
         device.add_listener(self._changed)
@@ -187,7 +194,7 @@ class CaptureRoutingPanel(QWidget):
             self._bindings[e.numid] = bind
             r, c = i % rows, (i // rows) * 2
             text = caption(f"DAW {i + 1}")
-            text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            text.setFixedWidth(text.fontMetrics().horizontalAdvance("DAW 88") + theme.S2)
             grid.addWidget(text, r, c)
             bind.combo.setMaximumWidth(190)
             grid.addWidget(bind.combo, r, c + 1)
@@ -227,9 +234,7 @@ class LevelStrip(QFrame):
         head = QLabel(title)
         head.setAlignment(Qt.AlignCenter)
         if bold:
-            font = head.font()
-            font.setBold(True)
-            head.setFont(font)
+            head.setObjectName("sectionTitle")      # a panel title, like the others
         lay.addWidget(head)
         if subtitle is not None:
             # Always present in a row of strips so the faders line up.

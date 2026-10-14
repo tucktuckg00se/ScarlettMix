@@ -52,9 +52,9 @@ class MarkCheckBox(Outlined, QCheckBox):
 
 def fmt_db(db: float) -> str:
     if db <= laws.MIN_DB:
-        return "-∞"
+        return "\u2212\u221e"
     r = round(db)
-    return "0" if r == 0 else f"{r:+d}"
+    return "0" if r == 0 else (f"+{r}" if r > 0 else f"\u2212{-r}")
 
 
 class Fader(QWidget):
@@ -66,8 +66,10 @@ class Fader(QWidget):
 
     changed = Signal(float)
 
-    HANDLE_H = 22
-    TICKS = (6, 0, -6, -12, -20, -30, -40, -60)
+    HANDLE_H = 14           # drawn height; the grab area is larger
+    HANDLE_W = 26
+    GRAB = 22
+    TICKS = (6, 0, -6, -12, -24, -48)
 
     def __init__(self, min_db: float = laws.MIN_DB, max_db: float = laws.MAX_DB,
                  default_db: float = 0.0, parent: QWidget | None = None, meters: int = 0):
@@ -78,18 +80,21 @@ class Fader(QWidget):
         self._top = laws.db_to_fader(self._max)
         self._drag_offset: float | None = None
         # Optional level meter beside the groove: up to ``meters`` bars.
-        self._meter_w = 6.0 * meters + (2.0 if meters else 0.0)
+        self._meter_w = 5.0 * meters + (4.0 if meters else 0.0)
         self._levels: list[float] = []
         self._unsaved = False
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
         self.setMinimumHeight(110)
 
+    def _groove_x(self) -> float:
+        return self._meter_w + self.HANDLE_W / 2 + 2
+
     def sizeHint(self) -> QSize:
-        return QSize(58 + int(self._meter_w), 240)
+        return QSize(int(self._groove_x() + self.HANDLE_W / 2 + 30), 240)
 
     def minimumSizeHint(self) -> QSize:
-        return QSize(58 + int(self._meter_w), 170)
+        return QSize(self.sizeHint().width(), 110)
 
     def db(self) -> float:
         return self._db
@@ -112,22 +117,22 @@ class Fader(QWidget):
             self._levels = levels
             self.update()
 
-    def _paint_meter(self, p: QPainter, faint: QColor) -> None:
+    def _paint_meter(self, p: QPainter, track: QColor) -> None:
         top, bottom = self._track()
         height = bottom - top
         for i, level in enumerate(self._levels):
-            x = 1.0 + 6.0 * i
-            p.setBrush(faint)
-            p.drawRect(QRectF(x, top, 4, height))
+            bar = QRectF(1.0 + 5.0 * i, top, 3, height)
+            p.setBrush(track)
+            p.drawRoundedRect(bar, 1.5, 1.5)
             frac = (level - self.METER_FLOOR) / -self.METER_FLOOR
             if frac <= 0:
                 continue
             # green to -12 dBFS, amber to -3, red above
-            for lo, hi, color in ((0.0, 0.8, "#3fa34d"), (0.8, 0.95, "#e0a800"), (0.95, 1.0, "#d9534f")):
+            for lo, hi, color in ((0.0, 0.8, "#3fa34d"), (0.8, 0.95, "#d4a72c"), (0.95, 1.0, "#e5534b")):
                 if frac > lo:
                     seg_top = bottom - min(frac, hi) * height
                     p.setBrush(QColor(color))
-                    p.drawRect(QRectF(x, seg_top, 4, bottom - lo * height - seg_top))
+                    p.drawRoundedRect(QRectF(bar.x(), seg_top, 3, bottom - lo * height - seg_top), 1.5, 1.5)
 
     def setDb(self, db: float) -> None:
         db = float(max(self._min, min(self._max, round(db))))
@@ -165,7 +170,7 @@ class Fader(QWidget):
             return
         y = ev.position().y()
         handle_y = self._y_for(self._db)
-        if abs(y - handle_y) <= self.HANDLE_H / 2:
+        if abs(y - handle_y) <= self.GRAB / 2:
             self._drag_offset = y - handle_y
         else:
             self._drag_offset = 0.0
@@ -209,60 +214,65 @@ class Fader(QWidget):
         group = QPalette.Active if self.isEnabled() else QPalette.Disabled
         text = pal.color(group, QPalette.WindowText)
         accent = pal.color(group, QPalette.Highlight)
-        groove_x = 16.0 + self._meter_w
+        if not self.isEnabled():
+            accent = QColor(text)
+            accent.setAlphaF(0.35)
+        gx = self._groove_x()
         top, bottom = self._track()
 
-        faint = QColor(text)
-        faint.setAlphaF(0.25)
+        track = QColor(text)
+        track.setAlphaF(0.14)
         p.setPen(Qt.NoPen)
-        p.setBrush(faint)
-        p.drawRoundedRect(QRectF(groove_x - 2, top, 4, bottom - top), 2, 2)
         if self._meter_w:
-            self._paint_meter(p, faint)
-            p.setBrush(faint)
+            self._paint_meter(p, track)
 
+        # groove, filled from the bottom up to the level
         handle_y = self._y_for(self._db)
+        p.setBrush(track)
+        p.drawRoundedRect(QRectF(gx - 2, top, 4, bottom - top), 2, 2)
+        fill = QRectF(gx - 2, handle_y, 4, bottom - handle_y)
         if self._unsaved:
-            p.setPen(QPen(accent, 1))
-            p.setBrush(pal.color(group, QPalette.Window))
-            p.drawRoundedRect(QRectF(groove_x - 2.5, handle_y, 5, bottom - handle_y), 2, 2)
+            p.setPen(QPen(accent, 1.2))
+            p.setBrush(Qt.NoBrush)
+            p.drawRoundedRect(fill.adjusted(-0.5, 0, 0.5, 0), 2, 2)
             p.setPen(Qt.NoPen)
         else:
             p.setBrush(accent)
-            p.drawRoundedRect(QRectF(groove_x - 2, handle_y, 4, bottom - handle_y), 2, 2)
+            p.drawRoundedRect(fill, 2, 2)
 
+        # scale: as many labels as fit without touching
         font = self.font()
-        font.setPointSizeF(max(6.5, font.pointSizeF() * 0.78))
+        font.setPointSizeF(max(7.0, font.pointSizeF() * 0.82))
         p.setFont(font)
         fm = QFontMetrics(font)
         dim = QColor(text)
-        dim.setAlphaF(0.6)
+        dim.setAlphaF(0.55)
         p.setPen(QPen(dim, 1))
-        last_y = -100.0
-        for tick in self.TICKS:
-            if not self._min < tick <= self._max:
-                continue
-            y = self._y_for(tick)
-            if y - last_y < fm.height() - 2:
+        lx = gx + self.HANDLE_W / 2 + 4
+        marks = [(t, "0" if t == 0 else fmt_db(t)) for t in self.TICKS if self._min < t <= self._max]
+        marks.append((None, "\u2212\u221e"))
+        last_y = -1000.0
+        for tick, label in marks:
+            y = bottom if tick is None else self._y_for(tick)
+            if y - last_y < fm.height() + 1 or (tick is not None and bottom - y < fm.height() + 1):
                 continue
             last_y = y
-            p.drawLine(QPointF(groove_x + 9, y), QPointF(groove_x + 13, y))
-            label = "0" if tick == 0 else f"{tick:+d}"
-            p.drawText(QPointF(groove_x + 16, y + fm.ascent() / 2 - 1), label)
-        if bottom - last_y >= fm.height() - 2:
-            p.drawLine(QPointF(groove_x + 9, bottom), QPointF(groove_x + 13, bottom))
-            p.drawText(QPointF(groove_x + 16, bottom + fm.ascent() / 2 - 1), "∞")
+            p.drawText(QPointF(lx, y + fm.capHeight() / 2), label)
 
-        handle = QRectF(groove_x - 11, handle_y - self.HANDLE_H / 2, 22, self.HANDLE_H)
+        # handle: a small pill with a centre line
+        handle = QRectF(gx - self.HANDLE_W / 2, handle_y - self.HANDLE_H / 2,
+                        self.HANDLE_W, self.HANDLE_H)
         if self._unsaved:
             p.setPen(QPen(accent, 2))
             p.setBrush(pal.color(group, QPalette.Window))
         else:
-            p.setPen(QPen(pal.color(group, QPalette.Mid), 1))
-            p.setBrush(pal.color(group, QPalette.Button))
-        p.drawRoundedRect(handle, 4, 4)
-        p.setPen(QPen(accent if self.hasFocus() else text, 2))
-        p.drawLine(QPointF(handle.left() + 4, handle_y), QPointF(handle.right() - 4, handle_y))
+            edge = QColor(text)
+            edge.setAlphaF(0.30)
+            p.setPen(QPen(edge, 1))
+            p.setBrush(pal.color(group, QPalette.Button).lighter(108))
+        p.drawRoundedRect(handle.adjusted(0.5, 0.5, -0.5, -0.5), 4, 4)
+        p.setPen(QPen(accent if self.hasFocus() else text, 1.6))
+        p.drawLine(QPointF(handle.left() + 6, handle_y), QPointF(handle.right() - 6, handle_y))
 
 
 class ToggleButton(QPushButton):
@@ -273,7 +283,7 @@ class ToggleButton(QPushButton):
         self.setCheckable(True)
         self.setToolTip(tooltip)
         self.setAccessibleName(tooltip or text)
-        self.setFixedHeight(26)
+        self.setFixedHeight(theme.CONTROL_H)
         # Same width whether drawn solid or as an outline (the two styles have
         # different natural sizes): share the row equally instead.
         self.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Fixed)
@@ -281,20 +291,24 @@ class ToggleButton(QPushButton):
         self._color, self._unsaved = color, None
         self.setUnsaved(False)
 
-    def setUnsaved(self, on: bool) -> None:
+    def _base(self) -> str:
+        # The small Link toggle keeps its compact size in both looks.
+        return "min-height: 18px; max-height: 18px; padding: 0;" if self.objectName() == "linkToggle" else "padding: 0 6px;"
+
+    def setUnsaved(self, on: bool, force: bool = False) -> None:
         """Outline instead of fill: this setting is not saved to hardware."""
-        if on == self._unsaved:
+        if on == self._unsaved and not force:
             return
         self._unsaved = on
         c = self._color
         if on:
             self.setStyleSheet(
                 "QPushButton { background-color: transparent; border: 2px solid #8a8f96;"
-                f" border-radius: {theme.RADIUS}px; padding: 2px 6px; }}"
+                f" border-radius: {theme.RADIUS}px; {self._base()} }}"
                 f"QPushButton:checked {{ border: 2px solid {c}; color: {c}; font-weight: 600; }}")
         else:
             self.setStyleSheet(
-                f"QPushButton {{ padding: 3px 6px; }}"
+                f"QPushButton {{ {self._base()} }}"
                 f"QPushButton:checked {{ background-color: {c}; color: #111; border-color: {c};"
                 " font-weight: 600; }")
 
