@@ -152,6 +152,7 @@ def _pair_card(title: str, rows: list[PairRow], columns: int = 1) -> QFrame:
     for i, row in enumerate(rows):
         row.names.setFixedWidth(width)
         row.pair.setMinimumWidth(row.pair.fontMetrics().horizontalAdvance("Analog in 7/8") + 40)
+        row.pair.setMaximumWidth(340)          # grows with the window, within reason
         grid.addWidget(row, i % per_column, i // per_column)
     lay.addLayout(grid)
     lay.addStretch(1)
@@ -207,8 +208,7 @@ class OutputRoutingPanel(QWidget):
                     for e in row.elems:
                         self._rows[e.numid] = row
             if rows:
-                cards.addWidget(_pair_card(heading, rows))
-        cards.addStretch(1)
+                cards.addWidget(_pair_card(heading, rows), 1)    # the panels share the width
         scroll = FitScrollArea()
         inner = QWidget()
         inner.setLayout(cards)
@@ -292,8 +292,7 @@ class CaptureRoutingPanel(QWidget):
                 self._rows[e.numid] = row
         cards = QHBoxLayout()
         cards.setContentsMargins(0, 0, 0, 0)
-        cards.addWidget(_pair_card("Recorded by the computer", rows, columns=2))
-        cards.addStretch(1)
+        cards.addWidget(_pair_card("Recorded by the computer", rows, columns=2), 1)
         scroll = FitScrollArea()
         inner = QWidget()
         inner.setLayout(cards)

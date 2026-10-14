@@ -208,10 +208,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Simulated device: nothing here reaches real hardware.")
 
 
+    DEFAULT_WIDTH = 1440
+
     def fit_to_contents(self) -> None:
-        """Open large enough to show every strip and routing row without
-        scrolling, at whatever font size the desktop uses, within the screen."""
+        """Open at a comfortable size: tall enough for the routing rows without
+        scrolling, and no wider than DEFAULT_WIDTH (the mixer strips scroll
+        sideways beyond that; the window can be widened to show them all)."""
         want = self.sizeHint()
+        want.setWidth(min(want.width(), self.DEFAULT_WIDTH))
         screen = self.screen().availableGeometry() if self.screen() else None
         if screen and screen.width() > 0:
             want = want.boundedTo(screen.size() * 0.94)
