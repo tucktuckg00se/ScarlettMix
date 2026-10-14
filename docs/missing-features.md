@@ -122,7 +122,11 @@ pair were each tried, with and without Save To HW, and the knob left them at
 -15.7 dB. After saving with outputs 3/4 in the mask and power-cycling, with
 no program setting levels, they followed the knob exactly. Removing an output
 from the mask releases it at once. So assigning the knob takes three steps:
-write the mask, save, restart the unit. This is what MixControl's hardware
+write the mask, save, restart the unit. A USB bus reset from the host
+(`USBDEVFS_RESET`) is not a restart for this purpose: tried with output 3
+saved into the mask, the list still read 3 afterwards and the output stayed at
+its own level. After that reset the driver re-read the unit: levels and mixer
+gains came back right, every mute switch came back as muted (wrong). This is what MixControl's hardware
 control mode relies on: it writes the blue outputs into this mask and stops
 setting their levels itself.
 
