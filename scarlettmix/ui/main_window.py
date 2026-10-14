@@ -208,14 +208,22 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Simulated device: nothing here reaches real hardware.")
 
 
-    DEFAULT_WIDTH = 1440
+    def default_width(self) -> int:
+        """As wide as the row below the mixer needs (routing panels, monitor
+        section, master level), so it opens without blank space; the mixer
+        strips scroll sideways, and widening the window shows more of them."""
+        lay = self.centralWidget().layout()
+        margins = lay.contentsMargins().left() + lay.contentsMargins().right()
+        row = self.routing_page.sizeHint().width() + theme.S3 + self.master_strip.width()
+        if self.monitor_panel:
+            row += 236 + theme.S3
+        return row + margins
 
     def fit_to_contents(self) -> None:
-        """Open at a comfortable size: tall enough for the routing rows without
-        scrolling, and no wider than DEFAULT_WIDTH (the mixer strips scroll
-        sideways beyond that; the window can be widened to show them all)."""
+        """Open tall enough for the routing rows without scrolling, and as wide
+        as default_width(), within the screen."""
         want = self.sizeHint()
-        want.setWidth(min(want.width(), self.DEFAULT_WIDTH))
+        want.setWidth(min(want.width(), self.default_width()))
         screen = self.screen().availableGeometry() if self.screen() else None
         if screen and screen.width() > 0:
             want = want.boundedTo(screen.size() * 0.94)
