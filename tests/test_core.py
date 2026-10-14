@@ -8,7 +8,7 @@ from scarlettmix.backend import FakeBackend
 from scarlettmix.device import Device, db_to_level, level_to_db
 from scarlettmix.mixer import MixController, MixModel, Strip
 
-DEFAULT_SNAPSHOT = os.path.join(os.path.dirname(__file__), "data", "Default.18i20")
+DEFAULT_SNAPSHOT = os.path.join(os.path.dirname(__file__), "data", "test-snapshot.18i20")
 
 
 @pytest.fixture

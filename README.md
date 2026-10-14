@@ -136,6 +136,10 @@ it, copy that file to `/etc/udev/rules.d/` and add, on the line after
 
 Tests: `python -m pytest`. They run against the simulated device only.
 
-`tests/data/Default.18i20` is a snapshot file shipped with Focusrite's
-MixControl, kept as a test fixture. Remove it before publishing this
-repository.
+## License
+
+GPL-3.0-or-later; see `LICENSE`. `driver/scarlett-gen1-extras.patch` is a
+change to the Linux kernel and is GPL-2.0, like the kernel.
+
+Not affiliated with Focusrite. "Scarlett" and "MixControl" are Focusrite's
+names, used here only to say what this works with and what it replaces.
