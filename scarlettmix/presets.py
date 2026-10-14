@@ -45,6 +45,80 @@ def save_state(device: Device, model: MixModel) -> None:
     os.replace(tmp, state_path(device))
 
 
+# -- what the interface holds, and whether the driver can be believed ------
+
+def saved_path(device: Device) -> str:
+    return os.path.join(config_dir(), f"saved-{device.backend.usb_id.replace(':', '-')}.json")
+
+
+def save_saved(device: Device, model: MixModel, monitor_states: list[str] | None = None) -> None:
+    """Record the complete setup at the moment of a Save to Hardware: this is
+    what the interface runs after its next power-on. Written at no other time."""
+    os.makedirs(config_dir(), exist_ok=True)
+    preset = snapshot(device, model, "saved to hardware")
+    if monitor_states is not None:
+        preset["monitor"] = list(monitor_states)
+    tmp = saved_path(device) + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(preset, f)
+    os.replace(tmp, saved_path(device))
+
+
+def load_saved(device: Device) -> dict | None:
+    try:
+        with open(saved_path(device)) as f:
+            preset = json.load(f)
+        return preset if preset.get("format") == FORMAT else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def _sync_path(device: Device) -> str:
+    return os.path.join(config_dir(), f"synced-{device.backend.usb_id.replace(':', '-')}.json")
+
+
+def is_trusted(device: Device) -> bool:
+    """Whether the driver's level readings can be believed: only if everything
+    was sent to the interface since it last appeared."""
+    try:
+        with open(_sync_path(device)) as f:
+            return json.load(f).get("connection") == device.backend.connection_id() != ""
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
+def mark_synced(device: Device) -> None:
+    os.makedirs(config_dir(), exist_ok=True)
+    with open(_sync_path(device), "w") as f:
+        json.dump({"connection": device.backend.connection_id()}, f)
+
+
+def prime(device: Device, preset: dict) -> None:
+    """Show a saved setup's levels, switches and gains without touching the
+    interface. Routing is left to be read from the unit, which reports it."""
+    allowed = {e.name: e for e in _preset_controls(device)}
+    for name, values in preset.get("controls", {}).items():
+        e = allowed.get(name)
+        if e and e.type != TYPE_ENUMERATED and len(values) == e.count:
+            device.believe(e, values)
+    try:
+        model = MixModel.from_dict(preset["mixer"], device.n_inputs, device.n_mixes)
+    except (ValueError, KeyError, TypeError):
+        return
+    for key, level in model.target_levels().items():
+        device.believe(device.matrix_gain[key], [level])
+
+
+def sync_all(device: Device) -> int:
+    """Send every level, switch and gain as currently shown, forced, so the
+    driver and the interface agree. Returns the number of controls sent."""
+    elems = [e for e in _preset_controls(device) if e.type != TYPE_ENUMERATED]
+    elems += list(device.matrix_gain.values())
+    for e in elems:
+        device.set(e, device.get(e), force=True)
+    return len(elems)
+
+
 def _preset_controls(device: Device):
     """Controls a preset carries, apart from the gain matrix (the mixer view owns that)."""
     elems = list(device.matrix_inputs) + list(device.capture)

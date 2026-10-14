@@ -149,8 +149,7 @@ restorer) silently fails to restore every mixer gain that should be at 0 dB.
 Writing a different value first gets through; ScarlettMix's restore does
 that now. A driver fix (always send level and switch writes) is in the
 patch and was tested: after a power cycle one plain write of 0 dB reached
-the unit, confirmed by the mix meter. The service's forced restore was
-verified the same way on that power cycle. Routing reads back correctly. A driver reload without a power
+the unit, confirmed by the mix meter. Routing reads back correctly. A driver reload without a power
 cycle reads gains back correctly, so the unit does report values it has
 been sent.
 
@@ -306,7 +305,7 @@ kernel; the raw-USB items need the udev rule in `contrib/`.
 
 | Need | Route | State |
 |---|---|---|
-| Settings back after a power cycle | a background service (`--daemon`) remembers the interface's state on every change and reapplies it whenever the interface appears | built and running; recording verified on the real interface, restore after a real power cycle not yet observed |
+| Settings back after a power cycle | a background service that remembered the interface's state and reapplied it | built, then removed: it recorded the driver's wrong power-on readings as the user's setup and pushed them back (all gains 0 dB, outputs muted). With Save To HW the unit keeps its own settings; the app shows the setup recorded at the last save and offers Sync |
 | Save to hardware, monitor-knob setup | detach `snd-usb-audio` from the control interface, send the request over usbfs, reattach; audio drops for a moment | not built; needs the udev rule first |
 | Meters | measure levels in software from the PipeWire capture and playback streams | not built; no mix-bus meters this way |
 

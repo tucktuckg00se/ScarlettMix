@@ -596,3 +596,64 @@ def test_buttons_come_from_the_unit_not_from_our_note(xdevice, tmp_path, monkeyp
 
     b._saved_masks = [3, 3, 3]; b.power_cycle()          # and the other way round
     assert fresh.adopt_unit() is True and fresh.states[2:4] == [SILVER, SILVER]
+
+
+# -- what the driver cannot be believed about ------------------------------------
+
+def test_restart_shows_saved_setup_without_touching_the_unit(tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    b = FakeBackend()
+    d = Device(b)
+    assert not presets.is_trusted(d)                     # never synced
+    c = MixController(d)
+    c.model.mix_for_bus(4).strips[2].db = -9.0
+    c.apply()
+    d.set(d.outputs[2].volume, [101, 101])
+    presets.sync_all(d); presets.mark_synced(d)
+    assert presets.is_trusted(d)
+    presets.save_saved(d, c.model)                       # as at Save to Hardware
+    truth = {e.numid: d.get(e) for e in d.elements if e.writable}
+
+    b.power_cycle(misreport=True)                        # driver now reads 0 dB / muted everywhere
+    b.writes.clear()
+    d2 = Device(b)
+    assert not presets.is_trusted(d2)
+    cell = d2.matrix_gain[(9, 7)]
+    assert d2.get(cell) == [128] and truth[cell.numid] == [0]     # the wrong reading
+    d2._cache.clear(); d2.untrusted = True
+    presets.prime(d2, presets.load_saved(d2))
+    assert b.writes == []                                # nothing sent
+    for e in d2.elements:
+        if e.writable and not e.items and e.name in d2.by_name and "Extension" not in e.name:
+            assert d2.get(e) == truth[e.numid], e.name   # shown as saved, not as misread
+    assert MixController(d2, presets.load_saved(d2)["mixer"]).restored
+
+    d2.set(cell, [0])                                    # "no change" by the wrong reading's logic...
+    assert [v for n, v in b.writes if n == cell.name] == [[1], [0]]   # ...is still sent
+    d2.refresh(d2.outputs[2].volume)
+    assert d2.get(d2.outputs[2].volume) == [101, 101]    # a re-read does not bring the nonsense back
+
+    b.writes.clear()
+    assert presets.sync_all(d2) == len(b.writes) // 2 > 150
+    d2.untrusted = False; presets.mark_synced(d2)
+    assert presets.is_trusted(Device(b))
+    b.power_cycle()
+    assert not presets.is_trusted(Device(b))
+
+
+def test_saved_snapshot_is_only_what_was_saved(device, tmp_path, monkeypatch):
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    assert presets.load_saved(device) is None
+    c = MixController(device)
+    presets.save_saved(device, c.model, ["blue"] * 10)
+    device.set(device.outputs[0].volume, [90, 90])       # changed afterwards, not saved
+    snap = presets.load_saved(device)
+    assert snap["controls"][device.outputs[0].volume.name] != [90, 90] and snap["monitor"] == ["blue"] * 10
+
+
+def test_real_connection_identity_parts(monkeypatch):
+    """A simulated restart changes the identity; an untracked backend has none."""
+    from scarlettmix.backend import Backend
+    b = FakeBackend()
+    first = b.connection_id(); b.power_cycle()
+    assert b.connection_id() != first and Backend().connection_id() == ""

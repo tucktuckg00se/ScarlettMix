@@ -6,8 +6,9 @@ import os
 
 from PySide6.QtCore import QSignalBlocker, QSocketNotifier, Qt, QTimer
 from PySide6.QtGui import QAction, QKeySequence
-from PySide6.QtWidgets import (QFileDialog, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
-                               QMessageBox, QSplitter, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QFileDialog, QFrame, QGroupBox, QHBoxLayout, QLabel, QMainWindow,
+                               QMessageBox, QPushButton, QSplitter, QTabWidget, QVBoxLayout,
+                               QWidget)
 
 from .. import presets
 from ..alsa import AlsaError
@@ -62,7 +63,20 @@ class MainWindow(QMainWindow):
 
     def load_backend(self, backend: Backend) -> None:
         self.device = device = Device(backend)
-        saved = None if backend.simulated else presets.load_state(device)
+        # After the interface powers on, the driver misreports its levels until
+        # they have all been sent again. Never show or record those readings as
+        # the truth: show what was last saved to the unit instead, if we know it.
+        self._track = not backend.simulated or getattr(backend, "honour_trust", False)
+        self._snapshot = None
+        if self._track and not presets.is_trusted(device):
+            device.untrusted = True
+            self._snapshot = presets.load_saved(device)
+            if self._snapshot:
+                presets.prime(device, self._snapshot)
+        if self._snapshot:
+            saved = self._snapshot.get("mixer")
+        else:
+            saved = presets.load_state(device) if self._track else None
         self.controller = MixController(device, saved)
         self.setWindowTitle(f"ScarlettMix — {device.model_name}"
                             + (" (simulated)" if backend.simulated else ""))
@@ -70,6 +84,7 @@ class MainWindow(QMainWindow):
         central = QWidget()
         root = QVBoxLayout(central)
         root.addLayout(self._header())
+        root.addWidget(self._banner())
 
         # Same arrangement as the original: mixer on top, routing below it on
         # the left, monitor section on the right.
@@ -143,6 +158,54 @@ class MainWindow(QMainWindow):
         if screen and screen.width() > 0:
             want = want.boundedTo(screen.size() * 0.94)
         self.resize(want)
+
+    def _banner(self) -> QFrame:
+        """Shown while the driver's level readings cannot be believed."""
+        self.banner = QFrame()
+        self.banner.setFrameShape(QFrame.StyledPanel)
+        self.banner.setStyleSheet("QFrame { background-color: #f3d98b; } QLabel { color: #222; }")
+        lay = QHBoxLayout(self.banner)
+        lay.setContentsMargins(8, 4, 8, 4)
+        text = QLabel()
+        text.setWordWrap(True)
+        lay.addWidget(text, 1)
+        self.sync_button = QPushButton("Sync")
+        self.sync_button.setToolTip("Send every level and switch shown here to the interface, "
+                                    "so that it and the driver agree")
+        self.sync_button.clicked.connect(self.sync_to_unit)
+        lay.addWidget(self.sync_button)
+        if self._snapshot:
+            text.setText("The interface or the computer has restarted. Showing the setup from "
+                         "your last Save to Hardware, because levels cannot be read back from "
+                         "the interface. Sync sends this setup to make sure it matches.")
+        else:
+            text.setText("The interface or the computer has restarted and ScarlettMix has no "
+                         "record of what the interface holds, so the levels and mutes shown may "
+                         "be wrong. Anything you change "
+                         "is sent. Loading a preset, or Save to Hardware once things are as you "
+                         "want them, puts this right.")
+            self.sync_button.hide()     # never push readings we know to be unreliable
+        self.banner.setVisible(self.device.untrusted)
+        return self.banner
+
+    def _now_trusted(self) -> None:
+        self.device.untrusted = False
+        if self._track:
+            presets.mark_synced(self.device)
+        self.banner.hide()
+
+    def sync_to_unit(self) -> None:
+        try:
+            self.mixer_page._applying = True
+            try:
+                count = presets.sync_all(self.device)
+            finally:
+                self.mixer_page._applying = False
+        except AlsaError:
+            self._disconnected()
+            return
+        self._now_trusted()
+        self.statusBar().showMessage(f"Sent {count} settings to the interface.", 5000)
 
     def _header(self) -> QHBoxLayout:
         d = self.device
@@ -243,6 +306,15 @@ class MainWindow(QMainWindow):
         except AlsaError as err:
             QMessageBox.warning(self, "Save to hardware", f"The interface refused:\n{err}")
             return
+        # Record what the unit now holds. Only when the values shown are known
+        # to be real: readings from a freshly restarted unit are not.
+        if self._track and (not self.device.untrusted or self._snapshot):
+            try:
+                presets.save_saved(self.device, self.controller.model,
+                                   list(self.monitor.states) if self.monitor_panel else None)
+                self._snapshot = presets.load_saved(self.device)
+            except OSError as err:
+                self.statusBar().showMessage(f"Could not record the saved setup: {err}", 8000)
         if restart_needed:
             QMessageBox.information(
                 self, "Save to hardware",
@@ -295,7 +367,8 @@ class MainWindow(QMainWindow):
             preset, notes = presets.load_file(path, self.device)
             self.mixer_page._applying = True
             try:
-                notes += presets.apply(preset, self.device, self.controller)
+                notes += presets.apply(preset, self.device, self.controller,
+                                       force=self.device.untrusted)
                 if self.monitor_panel and "monitor" in preset:
                     if self.monitor.set_states(preset["monitor"]):
                         self.monitor.apply()
@@ -313,6 +386,10 @@ class MainWindow(QMainWindow):
             return False
         self.mixer_page.model_replaced()
         self._save_timer.start()
+        if self.device.untrusted and "mixer" in preset and len(preset.get("controls", {})) > 20:
+            # A complete preset has just been sent in full, forced: the driver
+            # and the interface agree again.
+            self._now_trusted()
         self.statusBar().showMessage(f"Loaded {os.path.basename(path)}.", 5000)
         if notes:
             QMessageBox.information(self, "Preset loaded",

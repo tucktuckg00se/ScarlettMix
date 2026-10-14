@@ -14,8 +14,6 @@ tried on hardware.
     python -m scarlettmix --status   # print the current setup and exit
     python -m scarlettmix --load my-setup.json   # apply a preset and exit
     python -m scarlettmix --save my-setup.json   # write the current setup to a preset
-    python -m scarlettmix --restore  # put back the remembered setup once
-    python -m scarlettmix --daemon   # background service (see below)
 
 Requires Python 3.10+, PySide6 (`python-pyside6` on Arch) and `libasound`.
 Your user needs access to the sound card, which a normal desktop login has.
@@ -74,21 +72,35 @@ follows.
 
 ## Keeping settings across power cycles
 
-The interface only stores settings permanently on a command the Linux driver
-cannot send, so after losing power it comes back with old ones. The
-background service covers that from the computer's side:
+The interface keeps its own settings: File ▸ Save to Hardware stores the
+routing, mixer, output levels and monitor section in it, and it starts up
+that way with or without a computer. (This needs the patched driver; the
+stock one cannot send the save command.) Nothing runs in the background.
 
-    cp contrib/scarlettmix.service ~/.config/systemd/user/
-    systemctl --user enable --now scarlettmix.service
+One limitation shapes how the program behaves afterwards. Once the interface
+has powered on, the kernel driver reads its levels, mixer gains and mutes
+back wrongly until each has been sent again. So ScarlettMix never treats
+those readings as the truth:
 
-It remembers the interface's complete state a second after anything changes
-it (ScarlettMix, alsamixer, or any other program) and puts that state back
-each time the interface appears: at login, on replug, after a power cycle.
-It uses only the ALSA controls and about 20 MB of memory.
+- At every Save to Hardware it records the setup it saved
+  (`~/.config/scarlettmix/saved-*.json`).
+- After the interface or the computer restarts, it shows that recorded setup
+  and a yellow bar saying so. Starting the program still sends nothing.
+- **Sync** in that bar sends the shown setup, after which driver and
+  interface agree and the bar goes away. Until then every change you make is
+  sent regardless of what the driver believes.
 
-Two consequences: settings changed while the interface was attached to a
-different computer are replaced by this computer's remembered ones when it
-returns, and the interface still does not remember them when used standalone.
+Changes made after the last Save to Hardware are lost when the interface
+loses power, as with the original.
+
+Separately, the operating system saves the driver's readings at shutdown and
+writes them back when a sound card appears (`alsactl restore`, from
+`/usr/lib/udev/rules.d/90-alsa-restore.rules`). For this interface that can
+replace what it restored from its own memory with stale values. To exempt
+it, copy that file to `/etc/udev/rules.d/` and add, on the line after
+`LABEL="alsa_restore_go"`:
+
+    ATTRS{idVendor}=="1235", ATTRS{idProduct}=="800c", GOTO="alsa_restore_end"
 
 ## Layout
 
@@ -98,7 +110,7 @@ returns, and the interface still does not remember them when used standalone.
     scarlettmix/laws.py      fader and pan curves from the original
     scarlettmix/mixer.py     faders/pan/mute/solo/stereo -> hardware gain grid
     scarlettmix/presets.py   presets and MixControl snapshot import
-    scarlettmix/daemon.py    background service: remember and restore
+    scarlettmix/monitor.py   monitor section: output buttons, knob, mono, pad
     scarlettmix/ui/          PySide6 interface
     docs/mixcontrol-protocol.md   how the original works, with evidence
     docs/missing-features.md      meters, save and monitor knob: protocol and plan

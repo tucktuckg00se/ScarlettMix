@@ -52,6 +52,10 @@ class Backend:
     def sample_rate(self) -> int | None:
         return None
 
+    def connection_id(self) -> str:
+        """Changes every time the interface re-appears (power cycle, replug)."""
+        return ""
+
     def close(self) -> None:
         pass
 
@@ -78,6 +82,17 @@ class AlsaBackend(Backend):
     def drain_events(self):
         return self._ctl.drain_events()
 
+    def connection_id(self):
+        # New whenever the driver has read the unit afresh: the USB device
+        # number changes on a power cycle or replug, the sysfs node on a
+        # driver reload, the boot id on a restart of the computer.
+        try:
+            node = os.stat(f"/sys/class/sound/card{self.card}").st_ino
+        except OSError:
+            return ""
+        return "/".join((alsa._read("/proc/sys/kernel/random/boot_id").strip(),
+                         alsa._read(f"/proc/asound/card{self.card}/usbbus").strip(), str(node)))
+
     def sample_rate(self):
         # The kernel reports the measured rate of whichever stream is running.
         text = alsa._read(f"/proc/asound/card{self.card}/stream0")
@@ -102,6 +117,10 @@ class FakeBackend(Backend):
         with open(path) as f:
             data = json.load(f)
         self.saves = 0
+        self.connection = 1
+        # Set to make the app treat this simulated unit like a real one that
+        # can restart (it normally skips that for the demo).
+        self.honour_trust = False
         self.name = data["name"] + " (simulated)"
         self.usb_id = data["usb_id"]
         self._elems = [ElemInfo(**e) for e in data["elements"]]
@@ -169,10 +188,22 @@ class FakeBackend(Backend):
     def sample_rate(self):
         return 48000
 
-    def power_cycle(self) -> None:
-        """Extras only: the unit restarts with the masks it last saved."""
-        for numid, value in zip(self._mask_ids, self._saved_masks):
+    def connection_id(self):
+        return f"sim/{self.connection}"
+
+    def power_cycle(self, misreport: bool = False) -> None:
+        """The unit restarts: new connection, masks as last saved. With
+        ``misreport`` the driver then reads levels the way a real one does
+        after power-on: every gain and level 0 dB, every switch muted."""
+        self.connection += 1
+        for numid, value in zip(getattr(self, "_mask_ids", []), getattr(self, "_saved_masks", [])):
             self._values[numid] = [value]
+        if misreport:
+            for e in self._elems:
+                if e.writable and e.name.endswith("Playback Volume"):
+                    self._values[e.numid] = [128] * e.count
+                elif e.writable and e.name.endswith("Playback Switch"):
+                    self._values[e.numid] = [0] * e.count
 
 
 def find_cards() -> list[tuple[int, str, str]]:

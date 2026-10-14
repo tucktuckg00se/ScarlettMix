@@ -63,6 +63,10 @@ class Device:
         self.by_numid = {e.numid: e for e in self.elements}
         self._cache: dict[int, list[int]] = {}
         self._listeners: list[Callable[[ElemInfo], None]] = []
+        # True while the driver's readings of levels and switches cannot be
+        # believed (the unit has powered on since everything was last sent).
+        # Changes are then always forced through, and re-reads are skipped.
+        self.untrusted = False
 
         matrix_in: dict[int, ElemInfo] = {}
         self.matrix_gain: dict[tuple[int, int], ElemInfo] = {}
@@ -222,6 +226,7 @@ class Device:
         it believes. Writing a different value first gets the real one through.
         """
         values = [int(v) for v in values]
+        force = force or self.untrusted
         if force and e.writable and not e.items:
             if e.max > e.min:
                 other = [v - 1 if v > e.min else v + 1 for v in values]
@@ -235,6 +240,10 @@ class Device:
         self._cache[e.numid] = self.backend.read(e)
         self._notify(e)
         return True
+
+    def believe(self, e: ElemInfo, values: list[int]) -> None:
+        """Show this as the control's value without reading or writing it."""
+        self._cache[e.numid] = [int(v) for v in values]
 
     def item(self, e: ElemInfo) -> str:
         v = self.get(e)[0]
@@ -274,6 +283,8 @@ class Device:
 
     def refresh(self, e: ElemInfo) -> None:
         """Re-read a control that changes without an event (e.g. sync status)."""
+        if self.untrusted and e.writable and not e.items:
+            return      # the driver's reading would replace what we believe with nonsense
         new = self.backend.read(e)
         if self._cache.get(e.numid) != new:
             self._cache[e.numid] = new
