@@ -419,6 +419,12 @@ class OutputsPage(QWidget):
                 name, socket = names.output_title(o.label, device.backend.usb_id)
                 add(LevelStrip(device, name, o.volume, o.switch,
                                subtitle=socket if socket.startswith("Line") else ""))
+        # One fixed width for every strip, whatever the window size: the row
+        # scrolls when the window is narrow instead of squeezing the strips.
+        strips = list(dict.fromkeys(self._strips.values()))
+        width = max(s.sizeHint().width() for s in strips) if strips else 0
+        for s in strips:
+            s.setFixedWidth(width)
         row.addStretch(1)
         scroll.setWidget(inner)
         root.addWidget(scroll)
