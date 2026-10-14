@@ -1,5 +1,5 @@
 --- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
-+++ b/sound/usb/mixer_scarlett.c	2026-10-13 16:49:15.228847413 -0700
++++ b/sound/usb/mixer_scarlett.c	2026-10-13 17:00:28.400957867 -0700
 @@ -514,13 +514,16 @@
  
  		val = ucontrol->value.integer.value[i];
@@ -42,7 +42,7 @@
  	}
  
  	return changed;
-@@ -719,6 +721,253 @@
+@@ -719,6 +721,298 @@
  	return 0;
  }
  
@@ -120,6 +120,51 @@
 +	elem->cache_val[0] = buf;
 +	return changed;
 +}
++
++/*
++ * Test: read a mixer gain the way the vendor software does, with control
++ * selector 1 (wValue = 0x0100 | cell) instead of the selector 0 this driver
++ * uses. Returns the raw signed 16-bit value (1/256 dB).
++ */
++static int scarlett_cs1_info(struct snd_kcontrol *kctl,
++			     struct snd_ctl_elem_info *uinfo)
++{
++	uinfo->type = SNDRV_CTL_ELEM_TYPE_INTEGER;
++	uinfo->count = 1;
++	uinfo->value.integer.min = -32768;
++	uinfo->value.integer.max = 32767;
++	uinfo->value.integer.step = 1;
++	return 0;
++}
++
++static int scarlett_cs1_get(struct snd_kcontrol *kctl,
++			    struct snd_ctl_elem_value *ucontrol)
++{
++	struct usb_mixer_elem_info *elem = kctl->private_data;
++	struct snd_usb_audio *chip = elem->head.mixer->chip;
++	unsigned char buf[2] = {0, };
++	int idx = snd_usb_ctrl_intf(elem->head.mixer->hostif) |
++		  (elem->head.id << 8);
++	int err;
++
++	err = snd_usb_ctl_msg(chip->dev, usb_rcvctrlpipe(chip->dev, 0),
++			      UAC2_CS_CUR,
++			      USB_RECIP_INTERFACE | USB_TYPE_CLASS | USB_DIR_IN,
++			      (elem->control << 8) | elem->idx_off, idx, buf, 2);
++	if (err < 0)
++		return err;
++
++	ucontrol->value.integer.value[0] = (s16)(buf[0] | (buf[1] << 8));
++	return 0;
++}
++
++static const struct snd_kcontrol_new usb_scarlett_ctl_cs1 = {
++	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
++	.access = SNDRV_CTL_ELEM_ACCESS_READ | SNDRV_CTL_ELEM_ACCESS_VOLATILE,
++	.name = "",
++	.info = scarlett_cs1_info,
++	.get =  scarlett_cs1_get,
++};
 +
 +/* level meters: one little-endian 16-bit value per channel */
 +static int scarlett_level_info(struct snd_kcontrol *kctl,
@@ -296,7 +341,7 @@
  static const struct snd_kcontrol_new usb_scarlett_ctl_switch = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
  	.name = "",
-@@ -777,6 +1026,57 @@
+@@ -777,6 +1071,57 @@
  	.get =  scarlett_ctl_meter_get,
  };
  
@@ -354,7 +399,7 @@
  /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
  static const struct snd_kcontrol_new usb_forte_ctl_enum = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-@@ -1391,6 +1691,69 @@
+@@ -1391,6 +1736,103 @@
  	if (err < 0)
  		return err;
  
@@ -408,6 +453,40 @@
 +					  USB_MIXER_U8, 1, mx, NULL, &elem);
 +			if (err < 0)
 +				return err;
++		}
++
++		/*
++		 * Test reads of three mixer cells (input * 8 + mix), with
++		 * selector 1 and, uncached, with this driver's selector 0.
++		 */
++		{
++			static const struct {
++				int cell;
++				const char *name;
++			} cells[] = {
++				{ (2 << 3) + 0, "Test Matrix 03 Mix A" },
++				{ (8 << 3) + 7, "Test Matrix 09 Mix H" },
++				{ (9 << 3) + 7, "Test Matrix 10 Mix H" },
++			};
++
++			for (i = 0; i < ARRAY_SIZE(cells); i++) {
++				snprintf(mx, sizeof(mx), "%s Selector 1 Read",
++					 cells[i].name);
++				err = add_new_ctl(mixer, &usb_scarlett_ctl_cs1,
++						  NULL, 0x3c, 0x01,
++						  cells[i].cell, USB_MIXER_S16,
++						  1, mx, NULL, &elem);
++				if (err < 0)
++					return err;
++				snprintf(mx, sizeof(mx), "%s Selector 0 Read",
++					 cells[i].name);
++				err = add_new_ctl(mixer, &usb_scarlett_ctl_cs1,
++						  NULL, 0x3c, 0x00,
++						  cells[i].cell, USB_MIXER_S16,
++						  1, mx, NULL, &elem);
++				if (err < 0)
++					return err;
++			}
 +		}
 +
 +		for (i = 0; i < ARRAY_SIZE(mem_ctls); i++) {
