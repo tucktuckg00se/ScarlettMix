@@ -546,6 +546,7 @@ def test_knob_assignment_takes_a_save_and_a_restart(xdevice, tmp_path, monkeypat
     hp1 = next(o for o in xdevice.outputs if o.label == "Line 7/8")
     assert mon.live_mask() == 3 and mon.pending() == [] and not mon.unsaved()
 
+    own = xdevice.get(hp1.volume)
     mon.states[6] = mon.states[7] = BLUE                 # headphones 1 follow the monitor section
     mon.apply()
     # Mute and Dim act on them at once; the knob mask of the running unit is untouched.
@@ -568,8 +569,8 @@ def test_knob_assignment_takes_a_save_and_a_restart(xdevice, tmp_path, monkeypat
     after.states[6] = after.states[7] = SILVER           # taken off the knob again
     after.apply()
     names = [n for n, _ in b.writes]
-    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level set first: no jump
-    assert xdevice.get(hp1.volume) == [98, 98]           # the knob position (-30 in the simulator)
+    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level sent first
+    assert xdevice.get(hp1.volume) == own                # back at its own level, not the knob's
     assert xdevice.get(xdevice.hw_masks[0]) == [3] and after.unsaved()
 
 
@@ -657,3 +658,21 @@ def test_real_connection_identity_parts(monkeypatch):
     b = FakeBackend()
     first = b.connection_id(); b.power_cycle()
     assert b.connection_id() != first and Backend().connection_id() == ""
+
+
+def test_closing_gives_followed_outputs_their_level_back(xdevice, tmp_path, monkeypatch):
+    """Knob at minimum, headphones blue, then the program closes: the
+    headphones must not stay at minimum with nothing left to raise them."""
+    from scarlettmix.monitor import BLUE, Monitor
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    mon = Monitor(xdevice)
+    hp1 = next(o for o in xdevice.outputs if o.label == "Line 7/8")
+    xdevice.set(hp1.volume, [128, 128])
+    mon.states[6] = mon.states[7] = BLUE
+    mon.apply(); mon.follow(127)
+    assert xdevice.get(hp1.volume) == [1, 1]
+    assert mon.own_levels()[hp1.volume.name] == [128, 128]
+    mon.stop_following()
+    assert xdevice.get(hp1.volume) == [128, 128] and mon.parked == {}
+    again = Monitor(xdevice); again.load(); again.adopt_unit(); again.apply(); again.follow(127)
+    assert xdevice.get(hp1.volume) == [1, 1] and again.parked == {6: 128, 7: 128}   # resumes on reopen

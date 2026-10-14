@@ -311,7 +311,8 @@ class MainWindow(QMainWindow):
         if self._track and (not self.device.untrusted or self._snapshot):
             try:
                 presets.save_saved(self.device, self.controller.model,
-                                   list(self.monitor.states) if self.monitor_panel else None)
+                                   list(self.monitor.states) if self.monitor_panel else None,
+                                   self.monitor.own_levels() if self.monitor_panel else None)
                 self._snapshot = presets.load_saved(self.device)
             except OSError as err:
                 self.statusBar().showMessage(f"Could not record the saved setup: {err}", 8000)
@@ -417,5 +418,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev) -> None:
         self._save_state()
+        if self.monitor_panel:
+            try:
+                self.monitor.stop_following()
+            except AlsaError:
+                pass
         self._teardown()
         super().closeEvent(ev)

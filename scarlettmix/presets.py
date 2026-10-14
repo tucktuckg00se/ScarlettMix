@@ -51,13 +51,17 @@ def saved_path(device: Device) -> str:
     return os.path.join(config_dir(), f"saved-{device.backend.usb_id.replace(':', '-')}.json")
 
 
-def save_saved(device: Device, model: MixModel, monitor_states: list[str] | None = None) -> None:
+def save_saved(device: Device, model: MixModel, monitor_states: list[str] | None = None,
+               own_levels: dict[str, list[int]] | None = None) -> None:
     """Record the complete setup at the moment of a Save to Hardware: this is
     what the interface runs after its next power-on. Written at no other time."""
     os.makedirs(config_dir(), exist_ok=True)
     preset = snapshot(device, model, "saved to hardware")
     if monitor_states is not None:
         preset["monitor"] = list(monitor_states)
+    for name, values in (own_levels or {}).items():
+        if name in preset["controls"]:
+            preset["controls"][name] = list(values)
     tmp = saved_path(device) + ".tmp"
     with open(tmp, "w") as f:
         json.dump(preset, f)

@@ -216,10 +216,11 @@ class Monitor:
             self.device.set(output.switch, values)
 
     def _release(self, bits: int) -> None:
-        """Before outputs leave the unit's knob control, set their level to
-        where the knob is now. That level takes over the moment the mask is
-        written; without this it would jump to whatever was last sent, which
-        for the main monitors is typically close to full."""
+        """Before outputs leave the unit's knob control, send them the level
+        that takes over the moment the mask is written: the level they had
+        before they started following, if we know it; otherwise where the
+        knob is now, so that nothing jumps (for main monitors the last level
+        sent is typically close to full)."""
         knob = self.device.read_status()[0]
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.volume:
@@ -231,9 +232,9 @@ class Monitor:
             self.device.refresh(output.volume)
             values = self.device.get(output.volume)
             for i, side in leaving:
+                own = self.parked.pop(i, None)
                 if side < len(values):
-                    values[side] = db_to_level(-knob, output.volume)
-                self.parked.pop(i, None)
+                    values[side] = db_to_level(-knob, output.volume) if own is None else own
             # Forced: the driver may believe the level is already this value.
             self.device.set(output.volume, values, force=True)
 
@@ -257,6 +258,32 @@ class Monitor:
                 elif i in self.parked and self.states[i] != BLUE:
                     values[side] = self.parked.pop(i)
             self.device.set(output.volume, values)
+
+    def own_levels(self) -> dict[str, list[int]]:
+        """Each analogue output's own level: for outputs this program is
+        moving with the knob, the level they had before, not where the knob
+        has put them."""
+        levels = {}
+        for output in dict.fromkeys(o for o, _ in self.channels):
+            if not output.volume:
+                continue
+            values = self.device.get(output.volume)
+            for i, (o, side) in enumerate(self.channels):
+                if o is output and side < len(values) and i in self.parked:
+                    values[side] = self.parked[i]
+            levels[output.volume.name] = values
+        return levels
+
+    def stop_following(self) -> None:
+        """Called when this program stops: outputs it was moving with the
+        knob go back to their own level instead of staying wherever the knob
+        happened to be, where nothing could raise them again."""
+        if not any(self._followed(i) for i in range(len(self.states))):
+            return
+        for name, values in self.own_levels().items():
+            self.device.set(self.device.by_name[name], values)
+        self.parked = {i: v for i, v in self.parked.items() if not self._followed(i)}
+        self.save()
 
     def follow(self, attenuation: int) -> int:
         """Make pending blue outputs track the monitor knob. Outputs the unit
