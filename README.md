@@ -3,6 +3,8 @@
 Mixer and routing control for first-generation Focusrite Scarlett interfaces
 on Linux, modelled on the discontinued Scarlett MixControl.
 
+![ScarlettMix controlling a Scarlett 18i20](docs/screenshot.png)
+
 Developed and tested on a Scarlett 18i20 (USB `1235:800c`). The 6i6, 8i6,
 18i6 and 18i8 use the same kernel driver and should work, but have not been
 tried on hardware.
