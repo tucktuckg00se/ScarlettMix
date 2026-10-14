@@ -37,6 +37,8 @@ def fmt_pan(pan: float) -> str:
 
 
 LINK_COLOR = theme.LINK
+HEAD_H = 20             # strip header row (number / mix name)
+PAN_H = 20              # pan row, kept even when hidden
 
 
 class ChannelStrip(QFrame):
@@ -57,14 +59,14 @@ class ChannelStrip(QFrame):
         label = "/".join(str(i + 1) for i in indices)
 
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(theme.S1 + 1, theme.S2 - 2, theme.S1 + 1, theme.S2 - 2)
-        lay.setSpacing(theme.S1 + 1)
+        _strip_margins(lay)
 
         # Header: the input number, and on the left input of each pair the
         # switch that joins the pair into one stereo channel (as in the original).
         head = QHBoxLayout()
         head.setSpacing(theme.S1)
         self.number = caption(label)
+        self.number.setFixedHeight(HEAD_H)
         self.number.setToolTip(("Mixer inputs " if self.linked else "Mixer input ") + label)
         head.addWidget(self.number, 1)
         self.link = None
@@ -75,7 +77,7 @@ class ChannelStrip(QFrame):
                 f"Join inputs {self.index + 1} and {partner + 1} as one stereo channel in every mix")
             self.link.setObjectName("linkToggle")
             self.link.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-            self.link.setFixedSize(42, 20)
+            self.link.setFixedSize(42, HEAD_H)
             self.link.setUnsaved(False, force=True)     # restyle for its compact size
             font = self.link.font()
             font.setPointSizeF(font.pointSizeF() * 0.85)
@@ -85,7 +87,7 @@ class ChannelStrip(QFrame):
             head.addWidget(self.link)
         else:
             spacer = QWidget()
-            spacer.setFixedSize(0, 20)
+            spacer.setFixedSize(0, HEAD_H)
             head.addWidget(spacer)
         lay.addLayout(head)
 
@@ -96,6 +98,7 @@ class ChannelStrip(QFrame):
             combo = ItemCombo(route.items)
             combo.setFont(source_font(self))
             combo.setObjectName("sourceSelect")     # no arrow: the whole name is the button
+            combo.setFixedHeight(theme.CONTROL_H)
             combo.setAccessibleName(f"Mixer input {i + 1} source")
             combo.setSizeAdjustPolicy(ItemCombo.AdjustToMinimumContentsLengthWithIcon)
             combo.setMinimumContentsLength(6)
@@ -115,6 +118,7 @@ class ChannelStrip(QFrame):
         self.pan_label.mouseDoubleClickEvent = lambda ev: self.pan.setValue(0)
         # Hidden for mono mixes, but keeping its space so faders line up.
         for w in (self.pan, self.pan_label):
+            w.setFixedHeight(PAN_H)
             policy = w.sizePolicy()
             policy.setRetainSizeWhenHidden(True)
             w.setSizePolicy(policy)
@@ -211,6 +215,12 @@ class ChannelStrip(QFrame):
             self.edited.emit()
 
 
+def _strip_margins(lay) -> None:
+    """Margins and spacing shared by channel strips and the mix strip."""
+    lay.setContentsMargins(theme.S1 + 1, theme.S2 - 2, theme.S1 + 1, theme.S2 - 2)
+    lay.setSpacing(theme.S1 + 1)
+
+
 class MasterStrip(QFrame):
     edited = Signal()
     copy_requested = Signal(int)        # first bus of the mix to copy onto
@@ -219,20 +229,21 @@ class MasterStrip(QFrame):
         super().__init__(parent)
         self.device = device
         self.setObjectName("strip")
-        self.setFixedWidth(strip_width(self) + 30)
+        # Same width and rows as a channel strip, so everything lines up.
+        self.setFixedWidth(strip_width(self))
         lay = QVBoxLayout(self)
-        lay.setContentsMargins(theme.S2, theme.S2, theme.S2, theme.S2)
-        lay.setSpacing(theme.S1 + 1)
+        _strip_margins(lay)
 
         head = QHBoxLayout()
         head.setSpacing(theme.S1)
         self.title = QLabel()
         self.title.setObjectName("sectionTitle")
+        self.title.setFixedHeight(HEAD_H)
         head.addWidget(self.title, 1)
         self.copy = QToolButton()
         self.copy.setObjectName("more")
         self.copy.setText("\u22ef")
-        self.copy.setFixedHeight(20)
+        self.copy.setFixedHeight(HEAD_H)
         self.copy.setPopupMode(QToolButton.InstantPopup)
         self.copy.setToolTip("Copy this mix's levels, pans, mutes and master to another mix")
         self.copy_menu = QMenu(self.copy)
@@ -247,6 +258,8 @@ class MasterStrip(QFrame):
         self.send.setSizePolicy(self.send.sizePolicy().horizontalPolicy().Expanding,
                                 self.send.sizePolicy().verticalPolicy())
         self.send.setAccessibleName("Send this mix to outputs")
+        self.send.setFixedHeight(theme.CONTROL_H)
+        self.send.setObjectName("sendSelect")      # like the strips' source names: no arrow
         self.send_menu = QMenu(self.send)
         self.send.setMenu(self.send_menu)
         self._send_actions = []
@@ -260,7 +273,7 @@ class MasterStrip(QFrame):
         lay.addWidget(self.send)
         # Same height as a channel strip's pan row, so the faders line up.
         self._pan_space = QWidget()
-        self._pan_space.setFixedHeight(QSlider(Qt.Horizontal).sizeHint().height())
+        self._pan_space.setFixedHeight(PAN_H)
         lay.addWidget(self._pan_space)
 
         self.fader = Fader(meters=2 if device.has_meters else 0)
@@ -309,10 +322,14 @@ class MasterStrip(QFrame):
                 hp = self.device.headphones(o)
                 on.append(names.output_title(o.label, self.device.backend.usb_id)[0])
                 short.append(f"Phones {hp}" if hp else o.label.replace("Monitor", "Main"))
-        brief = ", ".join(short)
-        if len(brief) > 14:
-            brief = f"{len(short)} outputs"
-        self.send.setText("\u2192 " + brief if short else "Send to")
+        # As much as fits on the button; the full list is in the tooltip.
+        room = self.width() - 2 * (theme.S1 + 1) - 14
+        fm = self.send.fontMetrics()
+        joined = ", ".join(short)
+        count = f"{len(short)} outputs" if len(short) > 1 else joined
+        brief = next((t for t in ("\u2192 " + joined, joined, "\u2192 " + count, count)
+                      if fm.horizontalAdvance(t) <= room), count)
+        self.send.setText(brief if short else "Send to")
         self.send.setToolTip("Outputs playing this mix: " + (", ".join(on) if on else "none")
                              + ".\nA mono mix is sent to both sides of a pair.")
 
@@ -378,7 +395,18 @@ class MixerPage(QWidget):
         self.master = MasterStrip(device)
         self.master.edited.connect(self._edited)
         self.master.copy_requested.connect(self._copy_to)
-        body.addWidget(self.master)
+        column = QVBoxLayout()
+        column.setSpacing(0)
+        column.addWidget(self.master, 1)
+        # When the channel strips scroll sideways their scroll bar takes room
+        # under them; the same gap under the mix strip keeps the bottoms level.
+        self._under_master = QWidget()
+        self._under_master.setFixedHeight(0)
+        column.addWidget(self._under_master)
+        body.addLayout(column)
+        bar = scroll.horizontalScrollBar()
+        bar.rangeChanged.connect(
+            lambda lo, hi: self._under_master.setFixedHeight(bar.sizeHint().height() if hi > lo else 0))
         root.addLayout(body, 1)
 
         device.add_listener(self._device_changed)

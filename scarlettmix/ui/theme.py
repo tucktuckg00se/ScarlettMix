@@ -145,9 +145,14 @@ QToolButton#help {{
     padding: 0; font-weight: 700; color: {c['muted']};
 }}
 QPushButton#linkToggle {{ min-height: 18px; max-height: 18px; padding: 0; font-size: 8pt; }}
+QToolButton#sendSelect {{ padding: 0 6px; }}
+QToolButton#sendSelect::menu-indicator {{ image: none; width: 0; }}
 QToolButton#split {{ padding: 0 6px; color: {c['muted']}; }}
 QToolButton#split:checked {{ color: {c['text']}; border-color: {c['accent']}; }}
-QToolButton#more {{ padding: 0 4px; min-width: 18px; border-color: transparent; background: transparent; }}
+QToolButton#more {{
+    padding: 0 4px; min-width: 18px; min-height: 18px; max-height: 18px;
+    border-color: transparent; background: transparent;
+}}
 QToolButton#more:hover {{ background: {c['hover']}; }}
 QToolButton#more::menu-indicator {{ image: none; width: 0; }}
 
