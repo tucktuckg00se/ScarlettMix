@@ -676,3 +676,28 @@ def test_closing_gives_followed_outputs_their_level_back(xdevice, tmp_path, monk
     assert xdevice.get(hp1.volume) == [128, 128] and mon.parked == {}
     again = Monitor(xdevice); again.load(); again.adopt_unit(); again.apply(); again.follow(127)
     assert xdevice.get(hp1.volume) == [1, 1] and again.parked == {6: 128, 7: 128}   # resumes on reopen
+
+
+def test_following_that_starts_by_itself_still_gives_the_level_back(xdevice, tmp_path, monkeypatch):
+    """Blue, close, reopen: the buttons come from the unit and following
+    starts with no click. Silver, or another close, must still restore."""
+    from scarlettmix.monitor import BLUE, SILVER, Monitor
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    line34 = next(o for o in xdevice.outputs if o.label == "Line 3/4")
+    xdevice.set(line34.volume, [118, 128])
+
+    def reopen():
+        m = Monitor(xdevice); m.load(); m.adopt_unit(); m.follow(46)    # as the window does
+        return m
+
+    mon = Monitor(xdevice)
+    mon.states[2] = BLUE
+    mon.apply(); mon.save(); mon.follow(46)
+    for _ in range(2):                                   # twice: nothing may drift
+        mon.stop_following()
+        assert xdevice.get(line34.volume) == [118, 128]
+        mon = reopen()
+        assert xdevice.get(line34.volume) == [82, 128] and mon.parked == {2: 118}
+    mon.states[2] = SILVER
+    mon.apply(); mon.save()
+    assert xdevice.get(line34.volume) == [118, 128] and mon.parked == {}

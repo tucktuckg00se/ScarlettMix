@@ -289,6 +289,7 @@ class Monitor:
         """Make pending blue outputs track the monitor knob. Outputs the unit
         already moves are left alone. Returns the number of writes made."""
         written = 0
+        noted = False
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.volume:
                 continue
@@ -298,8 +299,16 @@ class Monitor:
             values = self.device.get(output.volume)
             for i, (o, side) in enumerate(self.channels):
                 if o is output and side < len(values) and self._followed(i):
+                    # Following can start by itself (at startup the buttons
+                    # come from the unit): note the output's own level before
+                    # the first change, or it could never be given back.
+                    if i not in self.parked:
+                        self.parked[i] = values[side]
+                        noted = True
                     values[side] = db_to_level(-attenuation, output.volume)
             written += self.device.set(output.volume, values)
+        if noted:
+            self.save()
         return written
 
     def save_to_hardware(self) -> bool:
