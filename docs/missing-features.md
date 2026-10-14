@@ -80,7 +80,7 @@ routed to it, and one output bit added to each mask in turn:
 | `0x06` | Dim on/off (same as the front-panel button) | status byte 3 follows it |
 | `0x0b` | bit mask of analogue outputs that Mute silences | with output 3 in the mask, Mute took it from -15.7 dB to below -130 dB |
 | `0x0c` | bit mask of analogue outputs that Dim attenuates | with output 3 in the mask, Dim took it to -33.7 dB (18 dB cut) |
-| `0x0a` | bit mask of analogue outputs whose level is held against software changes | with output 3 in the mask, a new level written to it had no effect (stayed at -25.7 dB after writing -20 dB); on removing the bit the written level applied at once (-35.7 dB) |
+| `0x0a` | bit mask of analogue outputs the monitor knob controls, read by the unit at power-on | saved with outputs 3/4 added and power-cycled: they came up at -89.9 dB with the knob at -74 (-15.7 minus 74), and at -43.8 dB with the knob at -28. While an output is in the mask, a level written from the computer is held (stayed at -25.7 dB after writing -20 dB) and applies when the bit is cleared (-35.7 dB) |
 
 Each mask is written as a 32-bit little-endian value, bit *n* for analogue
 output *n* + 1. Removing the bit restored the earlier behaviour every time.
@@ -115,20 +115,28 @@ main monitor outputs 1/2 clearly quieter; it changed nothing measurable on
 output 3. The amount was not measured. The default snapshot's monitor `pad`
 attribute and the exe's "-20dB" / "Pad" control images refer to it.
 
-**The monitor knob appears to act on outputs 1/2 only, in firmware.** No
-register tried here brought another output under it: with output 3 in mask
-`0x0a` (alone, or in all three masks) its level did not move when the knob
-was turned from -30 to -70 dB. Adding the whole pair, outputs 3 and 4
-together, made no difference either: both stayed at -15.7 dB while the knob
-went from -30 to -41 dB. Outputs 1/2 are presumably in `0x0a` so that
-the knob, not the computer, sets their level; that was not tested by
-removing them. The ordinary output
-level and mute controls (unit `0x0a`) were measured on the same loop and are
-exact: -10 and -20 dB settings gave -10.0 and -20.0 dB, and the switch gave
-silence. So a program can make any output follow the knob by reading the
-knob's attenuation from status byte 0 and writing that output's level, which
-is probably what MixControl's ten output buttons did for outputs beyond 1/2
-(inferred, not shown in the binary).
+**The monitor knob controls the outputs in mask `0x0a`, as of the last
+power-on.** Changing the mask on a running unit does not bring an output
+under the knob: output 3 alone, output 3 in all three masks, and the 3/4
+pair were each tried, with and without Save To HW, and the knob left them at
+-15.7 dB. After saving with outputs 3/4 in the mask and power-cycling, with
+no program setting levels, they followed the knob exactly. Removing an output
+from the mask releases it at once. So assigning the knob takes three steps:
+write the mask, save, restart the unit. This is what MixControl's hardware
+control mode relies on: it writes the blue outputs into this mask and stops
+setting their levels itself.
+
+The ordinary output level and mute controls (unit `0x0a`) were measured on
+the same loop and are exact: -10 and -20 dB settings gave -10.0 and -20.0 dB,
+and the switch gave silence. Following the knob from a program, by reading
+status byte 0 and writing output levels, therefore also works, and is what
+ScarlettMix did before the above was found.
+
+**Reading gains with control selector 1 makes no difference.** MixControl
+reads mixer gains with selector 1 (`wValue` `0x0100` + cell) where the kernel
+driver uses selector 0. After a power cycle both returned 0 for three cells
+that were really at 0 dB, off, and -6 dB (the last confirmed by the mix
+meter). The unit does not report its true gains after power-on either way.
 
 **Read-back after power-on is wrong for levels (existing driver bug).**
 After a power cycle the unit answers "0 dB" for mixer gains it has not been

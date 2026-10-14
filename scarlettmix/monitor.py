@@ -10,18 +10,17 @@ Each analogue output is in one of three states:
 How the interface does this (measured on an 18i20, see
 docs/missing-features.md):
 
-  * Two bit masks name the outputs its Mute and Dim buttons act on.
-  * A third mask names outputs whose level is NOT under software control:
-    while an output is in it, level changes sent from the computer are held
-    back, and they take effect when the output leaves the mask. The first
-    output pair is normally in it, and that pair is what the knob moves.
-  * The knob moves no other output by itself, so for other blue outputs it
-    is followed in software: read its position, set their level. Those
-    outputs must therefore stay out of the third mask.
+  * Two bit masks name the outputs its Mute and Dim buttons act on. They
+    take effect at once.
+  * A third mask names the outputs its monitor knob controls. The interface
+    reads it at power-on only, so a change needs Save To HW and a restart of
+    the unit. While an output is in it, level changes from the computer are
+    held back. Removing an output takes effect at once.
 
-The masks can be read from the interface, but this module does not do so
-yet: like the original, it keeps the button states in a file and sends them.
-Needs the controls of the patched driver.
+Until this module is reworked around that, it uses a stopgap for outputs
+other than the first pair: it keeps them out of the third mask and follows
+the knob in software, by reading its position and setting their level.
+
 """
 
 from __future__ import annotations
