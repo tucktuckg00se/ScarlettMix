@@ -125,6 +125,20 @@ def is_trusted(device: Device) -> bool:
         return False
 
 
+def prepare(device: Device) -> dict | None:
+    """Call once on a real device before believing anything it reads: if the
+    driver has read the interface afresh since everything was last sent, mark
+    its readings untrusted and show the last saved setup in their place.
+    Returns the saved setup that was substituted, if any."""
+    if is_trusted(device):
+        return None
+    device.untrusted = True
+    saved = load_saved(device)
+    if saved:
+        prime(device, saved)
+    return saved
+
+
 def mark_synced(device: Device) -> None:
     os.makedirs(config_dir(), exist_ok=True)
     with open(_sync_path(device), "w") as f:

@@ -456,8 +456,9 @@ class MonitorPanel(QWidget):
             self.mono.setChecked(self.monitor.mono)
         if self.pad:
             self.pad.setChecked(self.monitor.pad)
-        self.note.setText("<small>Outlined outputs: the knob takes over after Save to Hardware "
-                          "and switching the interface off and on.</small>" if pending else "")
+        self.note.setText("<small>Outlined: the knob takes these over only after Save to "
+                          "Hardware <b>and</b> switching the interface off and on.</small>"
+                          if pending else "")
 
     def refresh(self) -> None:
         """Re-read the monitor section from the interface (reads only)."""

@@ -72,6 +72,9 @@ def main(argv=None) -> int:
                   f"({', '.join(SUPPORTED_USB_IDS.values())})", file=sys.stderr)
             return 1
         device = Device(backend)
+        if not backend.simulated and presets.prepare(device) is None and device.untrusted:
+            print("note: the interface has restarted and its levels and mutes cannot be read "
+                  "back; those shown or saved here may be wrong", file=sys.stderr)
         if args.load:
             controller = MixController(device)
             preset, notes = presets.load_file(args.load, device)

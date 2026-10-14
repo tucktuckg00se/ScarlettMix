@@ -26,6 +26,14 @@ PRESET_FILTER = ("Presets (*.json *.18i20 *.18i8 *.18i6 *.6i6 *.8i6);;"
                  "Scarlett MixControl snapshots (*.18i20 *.18i8 *.18i6 *.6i6 *.8i6);;All files (*)")
 
 
+def _outputs(indices: list[int]) -> str:
+    """"output 3", "outputs 7 and 8", "outputs 1, 2, 7 and 8"."""
+    n = [str(i + 1) for i in indices]
+    if len(n) == 1:
+        return f"output {n[0]}"
+    return "outputs " + ", ".join(n[:-1]) + " and " + n[-1]
+
+
 class MainWindow(QMainWindow):
     def __init__(self, backend: Backend):
         super().__init__()
@@ -70,11 +78,8 @@ class MainWindow(QMainWindow):
         self._snapshot = None
         self._saved = False             # record of the last save; False = not read yet
         self._demo_saved = None         # the same for the simulated device, kept in memory
-        if self._track and not presets.is_trusted(device):
-            device.untrusted = True
-            self._snapshot = presets.load_saved(device)
-            if self._snapshot:
-                presets.prime(device, self._snapshot)
+        if self._track:
+            self._snapshot = presets.prepare(device)
         if self._snapshot:
             saved = self._snapshot.get("mixer")
         else:
@@ -87,6 +92,12 @@ class MainWindow(QMainWindow):
         root = QVBoxLayout(central)
         root.addLayout(self._header())
         root.addWidget(self._banner())
+        self.restart_banner = QLabel()
+        self.restart_banner.setWordWrap(True)
+        self.restart_banner.setStyleSheet("QLabel { background-color: #f0a030; color: #111; "
+                                          "font-weight: bold; padding: 6px 8px; }")
+        self.restart_banner.hide()
+        root.addWidget(self.restart_banner)
 
         # Same arrangement as the original: mixer on top, routing below it on
         # the left, monitor section on the right.
@@ -247,7 +258,19 @@ class MainWindow(QMainWindow):
         """Say whether the running setup is what the interface has stored."""
         if not self.device or not self.device.hw_save:
             return
-        differs = presets.differs_from_saved(self.device, self._saved_record(), self.monitor)
+        record = self._saved_record()
+        differs = presets.differs_from_saved(self.device, record, self.monitor)
+        # Outputs saved into the knob's list that the running interface's knob
+        # does not control: only a restart of the interface applies them.
+        waiting = []
+        if record and self.monitor_panel and "monitor_saved" in record:
+            saved_group = record["monitor_saved"].get("group", 0)
+            waiting = [i for i in self.monitor.pending() if saved_group >> i & 1]
+        self.restart_banner.setVisible(bool(waiting))
+        if waiting:
+            self.restart_banner.setText(
+                "Switch the interface off and on to finish: its monitor knob does not control "
+                f"{_outputs(waiting)} until it has restarted.")
         if differs is None:
             text, color, tip = ("Not yet saved from ScarlettMix", "#888",
                                 "ScarlettMix has no record of what the interface has stored.")
@@ -255,6 +278,10 @@ class MainWindow(QMainWindow):
             text, color, tip = ("\u25cf Changed since last save", "#c77700",
                                 "These changes are lost when the interface is switched off, "
                                 "unless you Save to Hardware.")
+        elif waiting:
+            text, color, tip = ("\u2713 Saved \u2013 restart the interface", "#c77700",
+                                "Everything is stored, but the monitor knob only takes on new "
+                                "outputs when the interface starts up.")
         else:
             text, color, tip = ("\u2713 Saved in the interface", "#3fa34d",
                                 "The running setup matches what the interface has stored.")
@@ -322,11 +349,15 @@ class MainWindow(QMainWindow):
             self._disconnected()
 
     def save_to_hardware(self) -> None:
-        if QMessageBox.question(
-                self, "Save to hardware",
-                "Store the current routing and mixer in the interface, replacing what it "
-                "has stored now?\n\nIt will then start up this way without the computer."
-        ) != QMessageBox.Yes:
+        text = ("Store the current routing, mixer, levels and monitor section in the interface, "
+                "replacing what it has stored now?\n\nIt will then start up this way without "
+                "the computer.")
+        waiting = self.monitor.pending() if self.monitor_panel else []
+        if waiting:
+            text += ("\n\nAFTER SAVING, SWITCH THE INTERFACE OFF AND ON.\n"
+                     f"The monitor knob only takes control of {_outputs(waiting)} when the "
+                     "interface starts up.")
+        if QMessageBox.question(self, "Save to hardware", text) != QMessageBox.Yes:
             return
         try:
             restart_needed = False
@@ -350,10 +381,10 @@ class MainWindow(QMainWindow):
             except OSError as err:
                 self.statusBar().showMessage(f"Could not record the saved setup: {err}", 8000)
         if restart_needed:
-            QMessageBox.information(
-                self, "Save to hardware",
-                "Saved.\n\nThe outlined outputs come under the monitor knob once the "
-                "interface has been switched off and on.")
+            QMessageBox.warning(
+                self, "Now restart the interface",
+                "Saved.\n\nNow switch the interface off and on.\n\nUntil you do, the monitor "
+                f"knob does not control {_outputs(self.monitor.pending())}.")
         self._update_saved()
         self.statusBar().showMessage("Saved to the interface.", 5000)
 

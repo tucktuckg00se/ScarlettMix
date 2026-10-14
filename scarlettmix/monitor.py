@@ -112,20 +112,28 @@ class Monitor:
     # -- changing the interface ------------------------------------------------
 
     def set_state(self, index: int, state: str) -> None:
-        states = list(self.states)
-        states[index] = state
-        self.apply(states)
-
-    def use_preset(self, outputs: list[int]) -> None:
-        """Listed outputs form the monitor group; the rest become independent."""
-        self.apply([BLUE if i + 1 in outputs else SILVER for i in range(len(self.channels))])
-
-    def apply(self, states: list[str]) -> None:
-        """Make the interface match these button states. Only what differs
-        from what it has now is sent."""
+        """Change one output. Only that output's place in the lists and its
+        own mute are touched; what is shown for the others is never used, so
+        a wrong reading elsewhere cannot spread."""
         self.refresh()
+        if state == RED:
+            group = self.group                           # muting leaves the group alone
+        elif state == BLUE:
+            group = self.group | 1 << index
+        else:
+            group = self.group & ~(1 << index)
+        self._write_group(group)
+        output, side = self.channels[index]
+        if output.switch:
+            values = self.device.get(output.switch)      # 1 = audible
+            if side < len(values) and values[side] != (state != RED):
+                values[side] = int(state != RED)
+                self.device.set(output.switch, values)
+        self._write_mono(self.mono, group)
+        self.refresh()
+
+    def _write_group(self, group: int) -> None:
         d = self.device
-        group = sum(1 << i for i, s in enumerate(states) if s == BLUE)
         keep = self.knob_list & group
         if keep != self.knob_list:
             self._release(self.knob_list & ~keep)
@@ -133,6 +141,18 @@ class Monitor:
         for e in d.hw_masks[1:]:
             if d.backend.read(e)[0] != group:
                 d.write(e, [group])
+
+    def use_preset(self, outputs: list[int]) -> None:
+        """Listed outputs form the monitor group; the rest become independent."""
+        self.apply([BLUE if i + 1 in outputs else SILVER for i in range(len(self.channels))])
+
+    def apply(self, states: list[str]) -> None:
+        """Make the interface match a complete set of button states (a preset
+        or a monitor preset). Only what differs from what it has now is sent."""
+        self.refresh()
+        d = self.device
+        group = sum(1 << i for i, s in enumerate(states) if s == BLUE)
+        self._write_group(group)
         for output in dict.fromkeys(o for o, _ in self.channels):
             if not output.switch:
                 continue

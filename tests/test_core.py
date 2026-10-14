@@ -609,3 +609,34 @@ def test_saved_indicator_follows_the_monitor_group(xdevice):
     assert presets.differs_from_saved(xdevice, record, mon) is False
     mon.set_state(4, BLUE)
     assert presets.differs_from_saved(xdevice, record, mon) is True
+
+
+def test_a_click_never_acts_on_what_is_shown_for_other_outputs():
+    """The driver misreads every mute after the unit re-appears. Clicking one
+    button must not take the others out of the group or off the knob because
+    they were (wrongly) drawn red."""
+    from scarlettmix.monitor import BLUE, RED, SILVER, Monitor
+    b = FakeBackend(extras=True)
+    for name in ("Monitor Mask 0x0b", "Monitor Mask 0x0c"):
+        b.write(b.by_name[name], [0b11000111])
+    b.power_cycle(misreport=True); b._values[b._mask_ids[0]] = [3]
+    for i in b._mask_ids[1:]:
+        b._values[i] = [0b11000111]
+    d = Device(b)                                        # nobody marked it untrusted
+    mon = Monitor(d)
+    assert mon.states.count(RED) == 10                   # the wrong picture
+    monitor_level = d.get(d.outputs[0].volume)
+    b.writes.clear()
+    mon.set_state(2, SILVER)                             # output 3 leaves the group
+    assert [b.read(e)[0] for e in d.hw_masks] == [3, 0b11000011, 0b11000011]
+    assert d.get(d.outputs[0].volume) == monitor_level   # mains not released from the knob
+    assert all(n.startswith("Monitor Mask 0x0") or "Line 3/4" in n for n, _ in b.writes)
+
+
+def test_prepare_marks_a_fresh_unit_untrusted(tmp_path):
+    b = FakeBackend(extras=True)
+    d = Device(b)
+    assert presets.prepare(d) is None and d.untrusted and not d.primed
+    presets.mark_synced(d)
+    d2 = Device(b)
+    assert presets.prepare(d2) is None and not d2.untrusted
