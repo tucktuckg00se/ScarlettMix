@@ -767,3 +767,14 @@ def test_nothing_is_followed_once_the_interface_has_taken_over(xdevice):
     b.writes.clear()
     after = Monitor(d)
     assert after.follow(55) == 0 and b.writes == [] and after.own == {}
+
+
+def test_the_knob_replaces_the_level_as_the_interface_does(xdevice):
+    """Measured on the 18i20: two outputs with own levels of -20 and -10 dB
+    read the same under the interface's knob. The software stand-in must too."""
+    from scarlettmix.monitor import BLUE, Monitor
+    d = xdevice
+    line34 = next(o for o in d.outputs if o.label == "Line 3/4")
+    d.set(line34.volume, [108, 118])
+    mon = Monitor(d); mon.set_state(2, BLUE); mon.set_state(3, BLUE); mon.follow(29)
+    assert d.get(line34.volume) == [99, 99] and mon.own == {2: 108, 3: 118}

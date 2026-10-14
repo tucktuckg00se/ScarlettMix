@@ -424,6 +424,7 @@ class MonitorPanel(QWidget):
     """Front-panel readout, Dim and Mute, and the ten output buttons."""
 
     changed = Signal()          # the user changed something here
+    message = Signal(str)       # something worth telling the user
 
     def __init__(self, device: Device, monitor: Monitor, parent: QWidget | None = None):
         super().__init__(parent)
@@ -537,7 +538,15 @@ class MonitorPanel(QWidget):
         self.changed.emit()
 
     def _state_changed(self, index: int, state: str) -> None:
+        output, side = self.monitor.channels[index]
+        own = self.device.get(output.volume)[side] if output.volume else None
         self.monitor.set_state(index, state)
+        if state == BLUE and own is not None and level_to_db(own) < 0:
+            # The knob replaces an output's level; it does not turn down from it.
+            what = (f"Headphones {self.device.headphones(output)}"
+                    if self.device.headphones(output) else f"Output {index + 1}")
+            self.message.emit(f"{what} is now on the monitor knob: its own level "
+                              f"({level_to_db(own):+d} dB) no longer limits how loud it gets.")
         if self._knob is not None:
             self.monitor.follow(self._knob)
         self.sync()

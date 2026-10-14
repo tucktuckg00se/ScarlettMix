@@ -122,7 +122,19 @@ pair were each tried, with and without Save To HW, and the knob left them at
 -15.7 dB. After saving with outputs 3/4 in the mask and power-cycling, with
 no program setting levels, they followed the knob exactly. Removing an output
 from the mask releases it at once. So assigning the knob takes three steps:
-write the mask, save, restart the unit. A USB bus reset from the host
+write the mask, save, restart the unit.
+
+**The knob replaces an output's level; it does not attenuate from it.**
+Outputs 3 and 4 were given own levels of -20 and -10 dB (measured -27.7 and
+-17.8 dB with a -12 dBFS tone, baseline -7.6/-7.7), saved into the knob mask
+and the unit power-cycled. With the knob at -29 both then read -36.7/-36.8 dB
+(baseline minus 29; attenuating from the own levels would have given -56.6
+and -46.7), and at -71 both read -78.8. Own levels of -5 and -30 dB sent
+while the knob had them changed nothing, and took effect the moment the mask
+bit was cleared (-12.7 and -37.8 dB). So a level written to a knob-controlled
+output is stored and ignored until the output is released. ScarlettMix's
+software following does the same, and MixControl's code sets a blue output's
+level to the monitor level. A USB bus reset from the host
 (`USBDEVFS_RESET`) is not a restart for this purpose: tried with output 3
 saved into the mask, the list still read 3 afterwards and the output stayed at
 its own level. After that reset the driver re-read the unit: levels and mixer

@@ -131,6 +131,7 @@ class MainWindow(QMainWindow):
             # Drawn from the interface; the monitor object keeps nothing itself.
             self.monitor_panel = MonitorPanel(device, self.monitor)
             self.monitor_panel.changed.connect(self._mark_timer.start)
+            self.monitor_panel.message.connect(lambda t: self.statusBar().showMessage(t, 12000))
             mon_lay.addWidget(self.monitor_panel)
         self.master_strip = LevelStrip(device, "Master", device.master_volume, device.master_switch,
                                        bold=True, listen=True)
