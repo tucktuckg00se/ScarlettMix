@@ -1,5 +1,5 @@
---- a/sound/usb/mixer_scarlett.c	2026-10-13 13:33:18.468960483 -0700
-+++ b/sound/usb/mixer_scarlett.c	2026-10-13 17:00:28.400957867 -0700
+--- a/sound/usb/mixer_scarlett.c
++++ b/sound/usb/mixer_scarlett.c
 @@ -514,13 +514,16 @@
  
  		val = ucontrol->value.integer.value[i];
@@ -399,6 +399,24 @@
  /* Forte-specific control structures - use bRequest=0x03 instead of 0x01 */
  static const struct snd_kcontrol_new usb_forte_ctl_enum = {
  	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+@@ -869,7 +1214,7 @@
+ 		index + 1, name);
+ 	err = add_new_ctl(mixer, &usb_scarlett_ctl_switch,
+ 			  scarlett_ctl_resume, 0x0a, 0x01,
+-			  2*index+1, USB_MIXER_S16, 2, mx, NULL, &elem);
++			  2*index+1, USB_MIXER_U8, 2, mx, NULL, &elem);
+ 	if (err < 0)
+ 		return err;
+ 
+@@ -1178,7 +1523,7 @@
+ 	/* create master switch and playback volume */
+ 	err = add_new_ctl(mixer, &usb_scarlett_ctl_switch,
+ 			  scarlett_ctl_resume, 0x0a, 0x01, 0,
+-			  USB_MIXER_S16, 1, "Master Playback Switch", NULL,
++			  USB_MIXER_U8, 1, "Master Playback Switch", NULL,
+ 			  &elem);
+ 	if (err < 0)
+ 		return err;
 @@ -1391,6 +1736,103 @@
  	if (err < 0)
  		return err;

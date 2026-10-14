@@ -171,6 +171,28 @@ the unit, confirmed by the mix meter. Routing reads back correctly. A driver rel
 cycle reads gains back correctly, so the unit does report values it has
 been sent.
 
+**Mute read-back: a driver bug, now fixed in the patch.** The output mute
+controls (unit `0x0a`, control 1) are one-byte UAC2 booleans; the driver
+declared them `USB_MIXER_S16` and read two bytes. A one-byte GET CUR
+returned `00` for every channel while all outputs played; a two-byte one
+returned `00 0b`, which decodes as non-zero, so every output read as muted.
+With the switches declared `USB_MIXER_U8` they read correctly straight after
+loading, and muting line output 3 still works (-7.7 dB, -91 dB, -7.7 dB on
+the loopback).
+
+**Levels and gains after power-on: confirmed not reported.** Right after a
+power cycle, GET CUR on unit `0x0a` control 2 returned 0 dB for outputs
+saved at -28 and -27 dB. Focusrite's Windows driver (4.150, unpacked from
+the installer) passes these requests through without keeping any mixer
+state, so MixControl had the same limitation and kept its own snapshots.
+The firmware images use a custom container whose processor could not be
+identified (not ARM, Blackfin or XMOS by instruction patterns).
+
+**Do not read mixer-unit memory registers other than 0x00–0x04 and
+0x0a–0x0c.** A GET MEM of register `0x05` (Mute, write-only) timed out and
+left the device answering every control request with -EPROTO until it was
+power-cycled.
+
 **Driver behaviour noticed along the way.** After a fresh driver load, all
 `Master N Playback Switch` controls read "off" although the outputs are not
 muted: the driver asks the unit for each mute state and gets a non-zero
