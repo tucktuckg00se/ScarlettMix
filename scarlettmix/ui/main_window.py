@@ -357,6 +357,8 @@ class MainWindow(QMainWindow):
             text += ("\n\nAFTER SAVING, SWITCH THE INTERFACE OFF AND ON.\n"
                      f"The monitor knob only takes control of {_outputs(waiting)} when the "
                      "interface starts up.")
+        elif self.monitor_panel:
+            text += "\n\nNo restart of the interface is needed for this save."
         if QMessageBox.question(self, "Save to hardware", text) != QMessageBox.Yes:
             return
         try:
@@ -386,7 +388,10 @@ class MainWindow(QMainWindow):
                 "Saved.\n\nNow switch the interface off and on.\n\nUntil you do, the monitor "
                 f"knob does not control {_outputs(self.monitor.pending())}.")
         self._update_saved()
-        self.statusBar().showMessage("Saved to the interface.", 5000)
+        self.statusBar().showMessage(
+            "Saved to the interface. Restart it to finish." if restart_needed
+            else "Saved to the interface. No restart needed: its knob already controls every "
+                 "blue output.", 10000)
 
     def _poll_status(self) -> None:
         d = self.device
