@@ -418,86 +418,8 @@ def test_save_to_hardware(xdevice):
     assert xdevice.backend.saves == 1 and xdevice.backend.read(xdevice.hw_save) == [0]
 
 
-def test_monitor_states_to_masks_and_mutes(xdevice, tmp_path, monkeypatch):
-    from scarlettmix.monitor import BLUE, RED, SILVER, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mon = Monitor(xdevice)
-    assert mon.available and len(mon.states) == 10
-    assert mon.states == [BLUE, BLUE] + [SILVER] * 8 and mon.mask() == 0b11
-    mon.states[2] = BLUE          # output 3
-    mon.states[6] = RED           # output 7 (left of Line 7/8)
-    mon.apply()
-    # Mute and Dim masks carry every blue output; the level-hold mask only the knob's pair.
-    assert [xdevice.get(e) for e in xdevice.hw_masks] == [[0b011], [0b111], [0b111]]
-    by_label = {o.label: o for o in xdevice.outputs}
-    assert xdevice.get(by_label["Line 7/8"].switch) == [0, 1]
-    assert xdevice.get(by_label["Line 3/4"].switch) == [1, 1]
-    mon.states[6] = SILVER
-    mon.apply()
-    assert xdevice.get(by_label["Line 7/8"].switch) == [1, 1]
-    mon.save()
-    again = Monitor(Device(FakeBackend(extras=True)))
-    assert again.load() and again.states == mon.states
-    assert not again.set_states(["blue"] * 3) and not again.set_states(["purple"] * 10)
 
 
-def test_monitor_follow_skips_first_pair(xdevice):
-    from scarlettmix.monitor import BLUE, Monitor
-    mon = Monitor(xdevice)
-    by_label = {o.label: o for o in xdevice.outputs}
-    monitor_before = xdevice.get(by_label["Monitor"].volume)
-    assert mon.follow(40) == 0                       # only 1/2 are blue: nothing to do
-    mon.states[2] = BLUE                             # output 3
-    mon.states[8] = mon.states[9] = BLUE             # outputs 9/10
-    assert mon.follow(40) == 2
-    assert xdevice.get(by_label["Line 3/4"].volume)[0] == 128 - 40
-    assert xdevice.get(by_label["Line 3/4"].volume)[1] != 128 - 40    # output 4 is silver
-    assert xdevice.get(by_label["Line 9/10"].volume) == [88, 88]
-    assert xdevice.get(by_label["Monitor"].volume) == monitor_before
-    assert mon.follow(40) == 0                       # unchanged knob: no writes
-    mon.follow(127)
-    assert xdevice.get(by_label["Line 9/10"].volume) == [1, 1]
-
-
-
-
-def test_output_gets_its_level_back_when_it_stops_following(xdevice, tmp_path, monkeypatch):
-    from scarlettmix.monitor import BLUE, SILVER, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mon = Monitor(xdevice)
-    line34 = next(o for o in xdevice.outputs if o.label == "Line 3/4")
-    xdevice.set(line34.volume, [120, 118])
-    mon.states[2] = BLUE
-    mon.apply(); mon.follow(40); mon.save()
-    assert xdevice.get(line34.volume) == [88, 118]
-    again = Monitor(xdevice); again.load()               # survives a restart
-    assert again.parked == {2: 120}
-    again.follow(60)
-    again.states[2] = SILVER
-    again.apply()
-    assert xdevice.get(line34.volume) == [120, 118] and again.parked == {}
-
-
-def test_knob_pair_leaves_blue_at_the_knob_level(xdevice, tmp_path, monkeypatch):
-    from scarlettmix.monitor import BLUE, SILVER, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mon = Monitor(xdevice)
-    monitor = xdevice.outputs[0]
-    xdevice.set(monitor.volume, [127, 127])              # software level near full, as usual
-    xdevice.backend.writes.clear()
-    mon.states[0] = mon.states[1] = SILVER
-    mon.apply()
-    names_written = [n for n, _ in xdevice.backend.writes]
-    # level is set to the knob position (-30 in the simulator) before the mask releases it
-    assert names_written.index(monitor.volume.name) < names_written.index("Monitor Mask 0x0a")
-    assert xdevice.get(monitor.volume) == [98, 98] and xdevice.get(xdevice.hw_masks[0]) == [0]
-    xdevice.set(monitor.volume, [110, 110])              # now the user's own fader setting
-    mon.apply()                                          # e.g. on reconnect: must not reset it
-    assert xdevice.get(monitor.volume) == [110, 110]
-    mon.states[0] = mon.states[1] = BLUE
-    mon.apply()
-    # Blue again, but never added back to a running unit: pending until save and restart.
-    assert xdevice.get(xdevice.hw_masks[0]) == [0] and mon.pending() == [0, 1]
 
 
 def test_monitor_presets_from_the_original(xdevice):
@@ -507,96 +429,12 @@ def test_monitor_presets_from_the_original(xdevice):
     assert list(table)[:3] == ["Mono", "Stereo", "Quad"] and table["5.1 Surround"] == [1, 2, 3, 4, 7, 8]
     mon.use_preset(table["Mid+Phones 1"])
     assert mon.states == [SILVER] * 6 + [BLUE, BLUE] + [SILVER] * 2
-    mon.apply()                                       # 1/2 leave the knob safely, 7/8 join Mute/Dim
     assert xdevice.get(xdevice.hw_masks[0]) == [0] and xdevice.get(xdevice.hw_masks[1]) == [0b0011000000]
     assert not Monitor(Device(FakeBackend())).available         # menu is not shown on the stock driver
 
 
-def test_mono_applies_to_fully_blue_pairs_only(xdevice):
-    from scarlettmix.monitor import BLUE, Monitor
-    mon = Monitor(xdevice)
-    mon.states[2] = BLUE                                 # output 3 blue, 4 silver
-    mon.states[6] = mon.states[7] = BLUE                 # 7/8 both blue
-    mon.mono = True
-    mon.apply()
-    assert [xdevice.get(e)[0] for e in xdevice.hw_mono] == [1, 0, 0, 1, 0]
-    mon.mono = False
-    mon.apply()
-    assert [xdevice.get(e)[0] for e in xdevice.hw_mono] == [0, 0, 0, 0, 0]
 
 
-def test_monitor_pad(xdevice, tmp_path, monkeypatch):
-    from scarlettmix.monitor import Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    mon = Monitor(xdevice)
-    mon.apply()
-    assert xdevice.get(xdevice.hw_pad) == [0]
-    mon.pad = True
-    mon.apply(); mon.save()
-    assert xdevice.get(xdevice.hw_pad) == [1]
-    again = Monitor(Device(FakeBackend(extras=True)))
-    assert again.load() and again.pad is True
-
-
-def test_knob_assignment_takes_a_save_and_a_restart(xdevice, tmp_path, monkeypatch):
-    from scarlettmix.monitor import BLUE, SILVER, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    b = xdevice.backend
-    mon = Monitor(xdevice)
-    hp1 = next(o for o in xdevice.outputs if o.label == "Line 7/8")
-    assert mon.live_mask() == 3 and mon.pending() == [] and not mon.unsaved()
-
-    own = xdevice.get(hp1.volume)
-    mon.states[6] = mon.states[7] = BLUE                 # headphones 1 follow the monitor section
-    mon.apply()
-    # Mute and Dim act on them at once; the knob mask of the running unit is untouched.
-    assert [xdevice.get(e) for e in xdevice.hw_masks] == [[3], [0b11000011], [0b11000011]]
-    assert mon.pending() == [6, 7]
-    assert mon.follow(40) == 1 and xdevice.get(hp1.volume) == [88, 88]      # software stopgap
-
-    assert mon.save_to_hardware() is True                # still pending: needs a restart
-    assert b.saves == 1 and b._saved_masks[0] == 0b11000011
-    assert xdevice.get(xdevice.hw_masks[0]) == [3]       # running unit put back as it was
-    assert not mon.unsaved()
-
-    b.power_cycle()
-    after = Monitor(xdevice); after.load()
-    assert after.adopt_unit() is False                   # file and unit already agree
-    assert after.live_mask() == 0b11000011 and after.pending() == []
-    b.writes.clear()
-    assert after.follow(55) == 0 and b.writes == []      # the unit moves them now, not us
-
-    after.states[6] = after.states[7] = SILVER           # taken off the knob again
-    after.apply()
-    names = [n for n, _ in b.writes]
-    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level sent first
-    assert xdevice.get(hp1.volume) == own                # back at its own level, not the knob's
-    assert xdevice.get(xdevice.hw_masks[0]) == [3] and after.unsaved()
-
-
-def test_buttons_come_from_the_unit_not_from_our_note(xdevice, tmp_path, monkeypatch):
-    """Save with 3/4 blue, click them off without saving, restart the unit:
-    it comes back with 3/4 on, and that is what must be shown."""
-    from scarlettmix.monitor import BLUE, RED, SILVER, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    b = xdevice.backend
-    mon = Monitor(xdevice)
-    mon.states[2] = mon.states[3] = BLUE
-    mon.apply(); mon.save_to_hardware()
-    mon.states[2] = mon.states[3] = SILVER               # changed after the save, not saved
-    mon.states[8] = RED
-    mon.apply(); mon.save()
-    b.power_cycle()
-
-    b.writes.clear()
-    fresh = Monitor(xdevice); fresh.load()
-    assert fresh.states[2:4] == [SILVER, SILVER]         # what our note says
-    assert fresh.adopt_unit() is True and b.writes == [] # reading only
-    assert fresh.states[2:4] == [BLUE, BLUE] and fresh.pending() == []
-    assert fresh.states[8] == RED                        # mutes still come from the note
-
-    b._saved_masks = [3, 3, 3]; b.power_cycle()          # and the other way round
-    assert fresh.adopt_unit() is True and fresh.states[2:4] == [SILVER, SILVER]
 
 
 # -- what the driver cannot be believed about ------------------------------------
@@ -646,10 +484,16 @@ def test_saved_snapshot_is_only_what_was_saved(device, tmp_path, monkeypatch):
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     assert presets.load_saved(device) is None
     c = MixController(device)
-    presets.save_saved(device, c.model, ["blue"] * 10)
-    device.set(device.outputs[0].volume, [90, 90])       # changed afterwards, not saved
+    presets.save_saved(device, c.model)
+    assert presets.differs_from_saved(device, None) is None
     snap = presets.load_saved(device)
-    assert snap["controls"][device.outputs[0].volume.name] != [90, 90] and snap["monitor"] == ["blue"] * 10
+    assert presets.differs_from_saved(device, snap) is False
+    device.set(device.outputs[0].volume, [90, 90])       # changed afterwards, not saved
+    assert presets.load_saved(device)["controls"][device.outputs[0].volume.name] != [90, 90]
+    assert presets.differs_from_saved(device, snap) is True
+    device.set(device.outputs[0].volume, snap["controls"][device.outputs[0].volume.name])
+    device.set(device.matrix_gain[(5, 3)], [100])        # a mixer gain counts too
+    assert presets.differs_from_saved(device, snap) is True
 
 
 def test_real_connection_identity_parts(monkeypatch):
@@ -660,44 +504,108 @@ def test_real_connection_identity_parts(monkeypatch):
     assert b.connection_id() != first and Backend().connection_id() == ""
 
 
-def test_closing_gives_followed_outputs_their_level_back(xdevice, tmp_path, monkeypatch):
-    """Knob at minimum, headphones blue, then the program closes: the
-    headphones must not stay at minimum with nothing left to raise them."""
-    from scarlettmix.monitor import BLUE, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+
+# -- monitor section: a window onto the interface ---------------------------------
+
+def _lists(d):
+    return [d.backend.read(e)[0] for e in d.hw_masks]
+
+
+def test_monitor_is_read_from_the_interface_and_reading_sends_nothing(xdevice):
+    from scarlettmix.monitor import BLUE, RED, SILVER, Monitor
+    b = xdevice.backend
+    b.write(xdevice.hw_masks[1], [0b11000011]); b.write(xdevice.hw_masks[2], [0b11000011])
+    hp2 = next(o for o in xdevice.outputs if o.label == "Line 9/10")
+    xdevice.set(hp2.switch, [0, 1])
+    b.writes.clear()
+    mon = Monitor(xdevice)
+    assert mon.states == [BLUE, BLUE] + [SILVER] * 4 + [BLUE, BLUE, RED, SILVER]
+    assert [mon.on_knob(i) for i in (0, 1, 6, 7)] == [True, True, False, False]
+    assert mon.pending() == [6, 7]                       # on the Mute/Dim lists, not the knob's
+    assert mon.refresh() is False and b.writes == []     # looking never writes
+    assert not hasattr(mon, "follow") and not hasattr(mon, "save")   # no notes, no following
+
+
+def test_click_changes_only_that_output(xdevice):
+    from scarlettmix.monitor import BLUE, RED, SILVER, Monitor
+    b = xdevice.backend
+    mon = Monitor(xdevice)
+    levels = {o.label: xdevice.get(o.volume) for o in xdevice.outputs if o.volume}
+    b.writes.clear()
+    mon.set_state(2, BLUE)                               # output 3 joins the group
+    assert b.writes == [("Monitor Mask 0x0b", [0b111]), ("Monitor Mask 0x0c", [0b111])]
+    assert _lists(xdevice) == [3, 7, 7] and mon.pending() == [2]
+    assert {o.label: xdevice.get(o.volume) for o in xdevice.outputs if o.volume} == levels
+
+    b.writes.clear()
+    mon.set_state(2, SILVER)
+    assert [n for n, _ in b.writes] == ["Monitor Mask 0x0b", "Monitor Mask 0x0c"]
+    assert _lists(xdevice) == [3, 3, 3]
+
+    line34 = next(o for o in xdevice.outputs if o.label == "Line 3/4")
+    b.writes.clear()
+    mon.set_state(3, RED)                                # output 4 muted: its own switch only
+    assert b.writes == [(line34.switch.name, [1, 0])] and mon.states[3] == RED
+    mon.set_state(3, BLUE)
+    assert xdevice.get(line34.switch) == [1, 1] and _lists(xdevice) == [3, 11, 11]
+
+
+def test_knob_takes_an_output_after_save_and_restart(xdevice):
+    from scarlettmix.monitor import BLUE, SILVER, Monitor
+    b = xdevice.backend
     mon = Monitor(xdevice)
     hp1 = next(o for o in xdevice.outputs if o.label == "Line 7/8")
-    xdevice.set(hp1.volume, [128, 128])
-    mon.states[6] = mon.states[7] = BLUE
-    mon.apply(); mon.follow(127)
-    assert xdevice.get(hp1.volume) == [1, 1]
-    assert mon.own_levels()[hp1.volume.name] == [128, 128]
-    mon.stop_following()
-    assert xdevice.get(hp1.volume) == [128, 128] and mon.parked == {}
-    again = Monitor(xdevice); again.load(); again.adopt_unit(); again.apply(); again.follow(127)
-    assert xdevice.get(hp1.volume) == [1, 1] and again.parked == {6: 128, 7: 128}   # resumes on reopen
+    own = xdevice.get(hp1.volume)
+    mon.set_state(6, BLUE); mon.set_state(7, BLUE)
+    assert mon.pending() == [6, 7] and _lists(xdevice)[0] == 3      # running unit's knob list untouched
+    assert mon.save_to_hardware() is True and b.saves == 1
+    assert b._saved_masks == [0b11000011] * 3 and _lists(xdevice)[0] == 3
+    assert xdevice.get(hp1.volume) == own                # nothing moved its level
+
+    b.power_cycle()
+    b.writes.clear()
+    after = Monitor(xdevice)
+    assert after.pending() == [] and after.on_knob(6) and b.writes == []
+
+    after.set_state(6, SILVER); after.set_state(7, SILVER)          # taken off the knob again
+    names = [n for n, _ in b.writes]
+    assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level first: no jump
+    assert xdevice.get(hp1.volume) == [98, 98]           # the knob position (-30 in the simulator)
+    assert _lists(xdevice) == [3, 3, 3]
+    after.set_state(6, BLUE)
+    assert _lists(xdevice)[0] == 3 and after.pending() == [6]       # never added back while running
 
 
-def test_following_that_starts_by_itself_still_gives_the_level_back(xdevice, tmp_path, monkeypatch):
-    """Blue, close, reopen: the buttons come from the unit and following
-    starts with no click. Silver, or another close, must still restore."""
-    from scarlettmix.monitor import BLUE, SILVER, Monitor
-    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
-    line34 = next(o for o in xdevice.outputs if o.label == "Line 3/4")
-    xdevice.set(line34.volume, [118, 128])
-
-    def reopen():
-        m = Monitor(xdevice); m.load(); m.adopt_unit(); m.follow(46)    # as the window does
-        return m
-
+def test_mono_pad_and_presets(xdevice):
+    from scarlettmix.monitor import BLUE, Monitor
     mon = Monitor(xdevice)
-    mon.states[2] = BLUE
-    mon.apply(); mon.save(); mon.follow(46)
-    for _ in range(2):                                   # twice: nothing may drift
-        mon.stop_following()
-        assert xdevice.get(line34.volume) == [118, 128]
-        mon = reopen()
-        assert xdevice.get(line34.volume) == [82, 128] and mon.parked == {2: 118}
-    mon.states[2] = SILVER
-    mon.apply(); mon.save()
-    assert xdevice.get(line34.volume) == [118, 128] and mon.parked == {}
+    mon.set_mono(True)
+    assert [xdevice.backend.read(e)[0] for e in xdevice.hw_mono] == [1, 0, 0, 0, 0]
+    mon.use_preset([1, 2, 3, 4, 7])                      # 7 without 8: that pair is not mono
+    assert [xdevice.backend.read(e)[0] for e in xdevice.hw_mono] == [1, 1, 0, 0, 0] and mon.mono
+    mon.set_mono(False)
+    assert not mon.mono and not any(xdevice.backend.read(e)[0] for e in xdevice.hw_mono)
+    mon.set_pad(True)
+    assert mon.pad and xdevice.backend.read(xdevice.hw_pad) == [1]
+    assert Monitor(xdevice).pad and Monitor(xdevice).states[6] == BLUE   # all of it read back
+
+
+def test_unreadable_mutes_are_not_drawn_red(tmp_path):
+    """After a restart the driver reports every output as muted. With no
+    saved setup to show instead, that must not paint every button red."""
+    from scarlettmix.monitor import RED, Monitor
+    b = FakeBackend(extras=True)
+    b.power_cycle(misreport=True)
+    d = Device(b); d.untrusted = True
+    assert RED not in Monitor(d).states
+    d.untrusted = False
+    assert Monitor(d).states.count(RED) == 10            # the same readings, if they were believed
+
+
+def test_saved_indicator_follows_the_monitor_group(xdevice):
+    from scarlettmix.monitor import BLUE, Monitor
+    mon = Monitor(xdevice); c = MixController(xdevice)
+    record = presets.saved_record(xdevice, c.model, mon)
+    assert presets.differs_from_saved(xdevice, record, mon) is False
+    mon.set_state(4, BLUE)
+    assert presets.differs_from_saved(xdevice, record, mon) is True

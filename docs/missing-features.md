@@ -130,8 +130,10 @@ The ordinary output level and mute controls (unit `0x0a`) were measured on
 the same loop and are exact: -10 and -20 dB settings gave -10.0 and -20.0 dB,
 and the switch gave silence. Following the knob from a program, by reading
 status byte 0 and writing output levels, therefore also works. ScarlettMix
-uses that only for outputs made blue since the unit last powered on, until
-they are saved and the unit is restarted.
+did that for a while for outputs added since the unit last powered on, and
+no longer does: it meant the program changed levels by itself whenever it
+was opened or closed, and showed outputs as knob-controlled when the unit
+was not controlling them. It now shows the unit's three lists as they are.
 
 **Reading gains with control selector 1 makes no difference.** MixControl
 reads mixer gains with selector 1 (`wValue` `0x0100` + cell) where the kernel

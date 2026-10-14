@@ -42,13 +42,16 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   for DAW capture channels.
 - **Levels**: master in the monitor section, per-pair level and mute on a tab.
 - **With the patched driver**: level meters beside the faders; File ▸ Save to
-  Hardware; and the monitor section's Dim, Mute and ten output buttons. Blue
-  outputs follow the front-panel knob, Mute and Dim; silver ones are
-  independent; red ones are muted. Each click moves to the next state.
-  Mute and Dim assignments act at once. The knob assignment is read by the
-  interface only when it powers on: after making an output blue, use Save
-  to Hardware and switch the interface off and on. Until then the output is
-  marked * and this program follows the knob for it.
+  Hardware; and the monitor section's Dim, Mute and ten output buttons. The
+  buttons are drawn from the interface and nothing else: blue means its
+  knob, Mute and Dim control that output; silver is independent; red is
+  muted. Each click moves to the next state. Mute and Dim take an output on
+  at once. The knob takes one on only when the interface powers on, so a
+  newly added output is drawn as a blue outline until you Save to Hardware
+  and switch the interface off and on. The program never moves an output's
+  level by itself, and opening or closing it sends nothing.
+  The top bar says whether the running setup is what the interface has
+  stored ("Saved in the interface" / "Changed since last save").
   Mono, the monitor Pad and the original's Monitor Preset menu are there too.
 - **Clock**: source selection, lock indicator, current sample rate.
 - **Presets**: save and load complete setups as JSON, and open original

@@ -67,6 +67,8 @@ class Device:
         # believed (the unit has powered on since everything was last sent).
         # Changes are then always forced through, and re-reads are skipped.
         self.untrusted = False
+        # True once a saved setup has been substituted for those readings.
+        self.primed = False
 
         matrix_in: dict[int, ElemInfo] = {}
         self.matrix_gain: dict[tuple[int, int], ElemInfo] = {}

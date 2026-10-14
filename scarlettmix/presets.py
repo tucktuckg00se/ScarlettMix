@@ -51,21 +51,55 @@ def saved_path(device: Device) -> str:
     return os.path.join(config_dir(), f"saved-{device.backend.usb_id.replace(':', '-')}.json")
 
 
-def save_saved(device: Device, model: MixModel, monitor_states: list[str] | None = None,
-               own_levels: dict[str, list[int]] | None = None) -> None:
+def save_saved(device: Device, model: MixModel, monitor=None) -> None:
     """Record the complete setup at the moment of a Save to Hardware: this is
     what the interface runs after its next power-on. Written at no other time."""
     os.makedirs(config_dir(), exist_ok=True)
-    preset = snapshot(device, model, "saved to hardware")
-    if monitor_states is not None:
-        preset["monitor"] = list(monitor_states)
-    for name, values in (own_levels or {}).items():
-        if name in preset["controls"]:
-            preset["controls"][name] = list(values)
+    preset = saved_record(device, model, monitor)
     tmp = saved_path(device) + ".tmp"
     with open(tmp, "w") as f:
         json.dump(preset, f)
     os.replace(tmp, saved_path(device))
+
+
+def saved_record(device: Device, model: MixModel, monitor=None) -> dict:
+    """Everything Save to Hardware stores, as the interface has it now."""
+    preset = snapshot(device, model, "saved to hardware")
+    if monitor is not None and monitor.available:
+        preset["monitor"] = list(monitor.states)
+        preset["monitor_saved"] = _monitor_summary(monitor)
+    return preset
+
+
+def _monitor_summary(monitor) -> dict:
+    return {"group": monitor.group, "mono": monitor.mono, "pad": monitor.pad}
+
+
+def differs_from_saved(device: Device, saved: dict | None, monitor=None) -> bool | None:
+    """Whether the running setup differs from what was last saved to the
+    interface. None if there is no record to compare with."""
+    if not saved:
+        return None
+    for e in _preset_controls(device):
+        was = saved.get("controls", {}).get(e.name)
+        values = device.get(e)
+        now = [e.items[v] for v in values] if e.type == TYPE_ENUMERATED else values
+        if was is not None and was != now:
+            return True
+    try:
+        if "mixer" in saved:
+            model = MixModel.from_dict(saved["mixer"], device.n_inputs, device.n_mixes)
+            gains = {device.matrix_gain[k].name: v for k, v in model.target_levels().items()}
+        else:
+            gains = saved.get("matrix", {})
+    except (ValueError, KeyError, TypeError):
+        gains = {}
+    for e in device.matrix_gain.values():
+        if e.name in gains and device.get(e)[0] != gains[e.name]:
+            return True
+    if monitor is not None and monitor.available and "monitor_saved" in saved:
+        return saved["monitor_saved"] != _monitor_summary(monitor)
+    return False
 
 
 def load_saved(device: Device) -> dict | None:
@@ -105,6 +139,7 @@ def prime(device: Device, preset: dict) -> None:
         e = allowed.get(name)
         if e and e.type != TYPE_ENUMERATED and len(values) == e.count:
             device.believe(e, values)
+    device.primed = True
     try:
         model = MixModel.from_dict(preset["mixer"], device.n_inputs, device.n_mixes)
     except (ValueError, KeyError, TypeError):

@@ -335,7 +335,7 @@ class OutputStateButton(QPushButton):
     """One of the monitor section's output buttons: blue, silver or red."""
 
     COLORS = {BLUE: "#4a90d9", SILVER: "#b8bcc2", RED: "#d9534f"}
-    MEANING = {BLUE: "follows the monitor knob, Mute and Dim",
+    MEANING = {BLUE: "the monitor knob, Mute and Dim control it",
                SILVER: "independent of the monitor section",
                RED: "muted"}
     CYCLE = (BLUE, SILVER, RED)
@@ -349,19 +349,22 @@ class OutputStateButton(QPushButton):
         self.set_state(SILVER)
 
     def set_state(self, state: str, pending: bool = False) -> None:
-        """``pending``: blue, but the interface's own knob only takes this
-        output over after Save to Hardware and a restart of the unit."""
+        """``pending``: in the monitor group, but drawn as an outline because
+        the interface's knob does not control this output yet."""
         self.state = state
-        border = "2px dashed #1b3a5c" if pending else "1px solid #555"
-        self.setText(f"{self.index + 1}*" if pending else str(self.index + 1))
-        self.setStyleSheet(f"QPushButton {{ background-color: {self.COLORS[state]}; color: #111;"
-                           f" font-weight: bold; border: {border}; border-radius: 4px; }}")
-        extra = ("\nFollows the knob through this computer for now. Save to Hardware, then "
-                 "switch the interface off and on, and it will follow the knob by itself."
-                 if pending else "")
-        self.setToolTip(f"{self.title}: {self.MEANING[state]}.{extra}\n"
-                        "Click to change: follows, independent, muted.")
-        self.setAccessibleName(f"{self.title} monitor state: {state}")
+        color = self.COLORS[state]
+        if pending:
+            look = f"background-color: transparent; color: {color}; border: 2px solid {color};"
+            meaning = ("Mute and Dim control it now. The knob will after Save to Hardware "
+                       "and switching the interface off and on")
+        else:
+            look = f"background-color: {color}; color: #111; border: 1px solid #555;"
+            meaning = self.MEANING[state]
+        self.setStyleSheet(f"QPushButton {{ {look} font-weight: bold; border-radius: 4px; }}")
+        self.setToolTip(f"{self.title}: {meaning}.\n"
+                        "Click to change: monitor group, independent, muted.")
+        self.setAccessibleName(f"{self.title} monitor state: {state}"
+                               + (", knob after restart" if pending else ""))
 
     def _clicked(self) -> None:
         # Each click moves to the next state. (The original hides silver behind shift-click.)
@@ -376,7 +379,6 @@ class MonitorPanel(QWidget):
     def __init__(self, device: Device, monitor: Monitor, parent: QWidget | None = None):
         super().__init__(parent)
         self.device, self.monitor = device, monitor
-        self._knob: int | None = None
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
 
@@ -427,7 +429,7 @@ class MonitorPanel(QWidget):
             preset.setText("Monitor Preset\u2026")
             preset.setPopupMode(QToolButton.InstantPopup)
             preset.setToolButtonStyle(Qt.ToolButtonTextOnly)
-            preset.setToolTip("Choose which outputs follow the monitor section; the rest "
+            preset.setToolTip("Choose which outputs are in the monitor group; the rest "
                               "become independent")
             menu = QMenu(preset)
             for name, outs in monitor.presets():
@@ -435,8 +437,8 @@ class MonitorPanel(QWidget):
                                lambda outs=outs: self._use_preset(outs))
             preset.setMenu(menu)
             lay.addWidget(preset, 0, Qt.AlignHCenter)
-        hint = QLabel("<small>blue: follows knob, Mute, Dim<br>silver: independent"
-                      "<br>red: muted</small>")
+        hint = QLabel("<small>blue: knob, Mute, Dim<br>outline: Mute, Dim; knob after restart"
+                      "<br>silver: independent<br>red: muted</small>")
         hint.setAlignment(Qt.AlignCenter)
         lay.addWidget(hint)
         self.note = QLabel()
@@ -446,6 +448,7 @@ class MonitorPanel(QWidget):
         self.sync()
 
     def sync(self) -> None:
+        """Draw the buttons as the monitor object last read them."""
         pending = set(self.monitor.pending())
         for i, (b, state) in enumerate(zip(self.buttons, self.monitor.states)):
             b.set_state(state, i in pending)
@@ -453,52 +456,32 @@ class MonitorPanel(QWidget):
             self.mono.setChecked(self.monitor.mono)
         if self.pad:
             self.pad.setChecked(self.monitor.pad)
-        if pending and self.monitor.unsaved() or pending and self.monitor.saved_states is None:
-            self.note.setText("<small>* knob follows through this computer until you "
-                              "Save to Hardware and restart the interface</small>")
-        elif pending:
-            self.note.setText("<small>* saved: switch the interface off and on and its "
-                              "knob takes these over</small>")
-        elif self.monitor.unsaved():
-            self.note.setText("<small>changed since the last Save to Hardware</small>")
-        else:
-            self.note.setText("")
+        self.note.setText("<small>Outlined outputs: the knob takes over after Save to Hardware "
+                          "and switching the interface off and on.</small>" if pending else "")
+
+    def refresh(self) -> None:
+        """Re-read the monitor section from the interface (reads only)."""
+        if self.monitor.refresh():
+            self.sync()
 
     def _mono_clicked(self, on: bool) -> None:
-        self.monitor.mono = on
-        self._commit()
+        self.monitor.set_mono(on)
+        self.sync()
 
     def _pad_clicked(self, on: bool) -> None:
-        self.monitor.pad = on
-        self._commit()
+        self.monitor.set_pad(on)
+        self.sync()
 
     def _use_preset(self, outputs: list[int]) -> None:
         self.monitor.use_preset(outputs)
         self.sync()
-        self._commit()
 
     def _state_changed(self, index: int, state: str) -> None:
-        self.monitor.states[index] = state
-        self._commit()
-
-    def saved(self) -> None:
-        """Called after Save to Hardware."""
-        self.sync()
-
-    def _commit(self) -> None:
-        self.monitor.apply()
-        self.monitor.save()
-        if self._knob is not None:
-            self.monitor.follow(self._knob)
+        self.monitor.set_state(index, state)
         self.sync()
 
     def set_status(self, knob: int, mute: bool, dim: bool) -> None:
-        """Show the front panel, and keep blue outputs at the knob's level."""
+        """Show the front panel."""
         self.knob.setText("Knob  " + ("-\u221e" if knob >= 127 else f"{-knob:+d} dB" if knob else "0 dB"))
         self.mute.setChecked(mute)
         self.dim.setChecked(dim)
-        if self.monitor.reload_if_changed():
-            self.sync()
-        if knob != self._knob:
-            self._knob = knob
-            self.monitor.follow(knob)

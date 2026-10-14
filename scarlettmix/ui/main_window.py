@@ -68,6 +68,8 @@ class MainWindow(QMainWindow):
         # the truth: show what was last saved to the unit instead, if we know it.
         self._track = not backend.simulated or getattr(backend, "honour_trust", False)
         self._snapshot = None
+        self._saved = False             # record of the last save; False = not read yet
+        self._demo_saved = None         # the same for the simulated device, kept in memory
         if self._track and not presets.is_trusted(device):
             device.untrusted = True
             self._snapshot = presets.load_saved(device)
@@ -105,13 +107,10 @@ class MainWindow(QMainWindow):
         self.monitor = Monitor(device)
         self.monitor_panel = None
         if self.monitor.available:
-            # Button states are ours to remember; the unit cannot report them.
-            self.monitor.load()
-            # The unit is the truth about its monitor setup; this only reads.
-            if self.monitor.adopt_unit() and not backend.simulated:
-                self.monitor.save()
+            # Drawn from the interface; the monitor object keeps nothing itself.
             self.monitor_panel = MonitorPanel(device, self.monitor)
             mon_lay.addWidget(self.monitor_panel)
+        self._update_saved()
         mon_lay.addWidget(LevelStrip(device, "Master", device.master_volume, device.master_switch,
                                      bold=True, listen=True), 1)
 
@@ -234,7 +233,41 @@ class MainWindow(QMainWindow):
                              "audio server (PipeWire/JACK) or the application, not by the mixer.")
         bar.addWidget(self.rate)
         bar.addStretch(1)
+        self.saved_label = QLabel()
+        self.save_button = QPushButton("Save to Hardware")
+        self.save_button.setToolTip("Store the running setup in the interface, so it starts up "
+                                    "this way with or without the computer")
+        self.save_button.clicked.connect(self.save_to_hardware)
+        for w in (self.saved_label, self.save_button):
+            w.setVisible(bool(d.hw_save))
+            bar.addWidget(w)
         return bar
+
+    def _update_saved(self) -> None:
+        """Say whether the running setup is what the interface has stored."""
+        if not self.device or not self.device.hw_save:
+            return
+        differs = presets.differs_from_saved(self.device, self._saved_record(), self.monitor)
+        if differs is None:
+            text, color, tip = ("Not yet saved from ScarlettMix", "#888",
+                                "ScarlettMix has no record of what the interface has stored.")
+        elif differs:
+            text, color, tip = ("\u25cf Changed since last save", "#c77700",
+                                "These changes are lost when the interface is switched off, "
+                                "unless you Save to Hardware.")
+        else:
+            text, color, tip = ("\u2713 Saved in the interface", "#3fa34d",
+                                "The running setup matches what the interface has stored.")
+        self.saved_label.setText(text)
+        self.saved_label.setStyleSheet(f"color: {color};")
+        self.saved_label.setToolTip(tip)
+
+    def _saved_record(self) -> dict | None:
+        if not self._track:
+            return self._demo_saved
+        if self._saved is False:
+            self._saved = presets.load_saved(self.device)
+        return self._saved
 
     def _teardown(self) -> None:
         self._status_timer.stop()
@@ -300,28 +333,28 @@ class MainWindow(QMainWindow):
             if self.monitor_panel:
                 # Also writes the knob assignment into the saved copy.
                 restart_needed = self.monitor.save_to_hardware()
-                self.monitor_panel.saved()
+                self.monitor_panel.sync()
             else:
                 self.device.save_to_hardware()
         except AlsaError as err:
             QMessageBox.warning(self, "Save to hardware", f"The interface refused:\n{err}")
             return
+        if not self._track:
+            self._demo_saved = presets.saved_record(self.device, self.controller.model, self.monitor)
         # Record what the unit now holds. Only when the values shown are known
         # to be real: readings from a freshly restarted unit are not.
         if self._track and (not self.device.untrusted or self._snapshot):
             try:
-                presets.save_saved(self.device, self.controller.model,
-                                   list(self.monitor.states) if self.monitor_panel else None,
-                                   self.monitor.own_levels() if self.monitor_panel else None)
-                self._snapshot = presets.load_saved(self.device)
+                presets.save_saved(self.device, self.controller.model, self.monitor)
+                self._snapshot = self._saved = presets.load_saved(self.device)
             except OSError as err:
                 self.statusBar().showMessage(f"Could not record the saved setup: {err}", 8000)
         if restart_needed:
             QMessageBox.information(
                 self, "Save to hardware",
-                "Saved.\n\nThe outputs marked * will follow the monitor knob by themselves "
-                "once the interface has been switched off and on. Until then this program "
-                "follows the knob for them.")
+                "Saved.\n\nThe outlined outputs come under the monitor knob once the "
+                "interface has been switched off and on.")
+        self._update_saved()
         self.statusBar().showMessage("Saved to the interface.", 5000)
 
     def _poll_status(self) -> None:
@@ -339,6 +372,12 @@ class MainWindow(QMainWindow):
             self._disconnected()
             return
         self.rate.setText(f"{rate / 1000:g} kHz" if rate else "idle")
+        try:
+            if self.monitor_panel:
+                self.monitor_panel.refresh()        # reads only
+            self._update_saved()
+        except AlsaError:
+            self._disconnected()
 
     def _device_changed(self, e) -> None:
         d = self.device
@@ -371,9 +410,8 @@ class MainWindow(QMainWindow):
                 notes += presets.apply(preset, self.device, self.controller,
                                        force=self.device.untrusted)
                 if self.monitor_panel and "monitor" in preset:
-                    if self.monitor.set_states(preset["monitor"]):
-                        self.monitor.apply()
-                        self.monitor.save()
+                    if self.monitor.fits(preset["monitor"]):
+                        self.monitor.apply(preset["monitor"])
                         self.monitor_panel.sync()
                     else:
                         notes.append("monitor buttons: do not fit this device")
@@ -418,10 +456,5 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, ev) -> None:
         self._save_state()
-        if self.monitor_panel:
-            try:
-                self.monitor.stop_following()
-            except AlsaError:
-                pass
         self._teardown()
         super().closeEvent(ev)
