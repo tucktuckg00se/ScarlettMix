@@ -92,7 +92,9 @@ class MainWindow(QMainWindow):
         if self.monitor.available:
             # Button states are ours to remember; the unit cannot report them.
             self.monitor.load()
-            self.monitor.refresh()      # which outputs the unit's knob controls now (a read)
+            # The unit is the truth about its monitor setup; this only reads.
+            if self.monitor.adopt_unit() and not backend.simulated:
+                self.monitor.save()
             self.monitor_panel = MonitorPanel(device, self.monitor)
             mon_lay.addWidget(self.monitor_panel)
         mon_lay.addWidget(LevelStrip(device, "Master", device.master_volume, device.master_switch,

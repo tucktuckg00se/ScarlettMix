@@ -54,10 +54,12 @@ class Session:
             for n in notes:
                 log(f"  skipped: {n}")
         if self.monitor.available:
-            # The interface cannot report its monitor masks, so send ours.
+            # The interface knows its own monitor setup (it holds what was
+            # last saved); take it from there rather than pushing our note.
             self.monitor.load()
-            self.monitor.apply()
-            log("monitor buttons applied: " + " ".join(s[0] for s in self.monitor.states))
+            if self.monitor.adopt_unit():
+                self.monitor.save()
+            log("monitor buttons read from the unit: " + " ".join(s[0] for s in self.monitor.states))
         self.device.add_listener(self._changed)
         self._fd = self.device.backend.event_fd()
 

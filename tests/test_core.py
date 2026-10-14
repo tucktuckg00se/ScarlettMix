@@ -548,7 +548,9 @@ def test_daemon_follows_the_knob(tmp_path, monkeypatch):
     s.start()
     d = s.device
     hp2 = next(o for o in d.outputs if o.label == "Line 9/10")
-    assert d.get(d.hw_masks[1]) == [0b1100000011]    # masks sent on connect
+    assert s.monitor.states[8] == "silver"           # the unit, not our note, says what is blue
+    s.monitor.states[8] = s.monitor.states[9] = BLUE; s.monitor.apply()
+    assert d.get(d.hw_masks[1]) == [0b1100000011]
     assert s.step(0) and d.get(hp2.volume) == [128 - 30, 128 - 30]   # knob at -30 in the simulator
     d.backend._values[d.hw_status.numid][0] = 52     # knob turned down
     assert s.step(0) and d.get(hp2.volume) == [76, 76]
@@ -671,6 +673,7 @@ def test_knob_assignment_takes_a_save_and_a_restart(xdevice, tmp_path, monkeypat
 
     b.power_cycle()
     after = Monitor(xdevice); after.load()
+    assert after.adopt_unit() is False                   # file and unit already agree
     assert after.live_mask() == 0b11000011 and after.pending() == []
     b.writes.clear()
     assert after.follow(55) == 0 and b.writes == []      # the unit moves them now, not us
@@ -681,3 +684,28 @@ def test_knob_assignment_takes_a_save_and_a_restart(xdevice, tmp_path, monkeypat
     assert names.index(hp1.volume.name) < names.index("Monitor Mask 0x0a")   # level set first: no jump
     assert xdevice.get(hp1.volume) == [98, 98]           # the knob position (-30 in the simulator)
     assert xdevice.get(xdevice.hw_masks[0]) == [3] and after.unsaved()
+
+
+def test_buttons_come_from_the_unit_not_from_our_note(xdevice, tmp_path, monkeypatch):
+    """Save with 3/4 blue, click them off without saving, restart the unit:
+    it comes back with 3/4 on, and that is what must be shown."""
+    from scarlettmix.monitor import BLUE, RED, SILVER, Monitor
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    b = xdevice.backend
+    mon = Monitor(xdevice)
+    mon.states[2] = mon.states[3] = BLUE
+    mon.apply(); mon.save_to_hardware()
+    mon.states[2] = mon.states[3] = SILVER               # changed after the save, not saved
+    mon.states[8] = RED
+    mon.apply(); mon.save()
+    b.power_cycle()
+
+    b.writes.clear()
+    fresh = Monitor(xdevice); fresh.load()
+    assert fresh.states[2:4] == [SILVER, SILVER]         # what our note says
+    assert fresh.adopt_unit() is True and b.writes == [] # reading only
+    assert fresh.states[2:4] == [BLUE, BLUE] and fresh.pending() == []
+    assert fresh.states[8] == RED                        # mutes still come from the note
+
+    b._saved_masks = [3, 3, 3]; b.power_cycle()          # and the other way round
+    assert fresh.adopt_unit() is True and fresh.states[2:4] == [SILVER, SILVER]

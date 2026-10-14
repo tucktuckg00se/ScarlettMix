@@ -146,6 +146,27 @@ class Monitor:
         self._live = self.device.backend.read(self.device.hw_masks[0])[0]
         return self._live
 
+    def adopt_unit(self) -> bool:
+        """Take the button states from the interface itself. It is the truth
+        about what follows the monitor section: after a restart it holds what
+        was last saved, whatever was clicked here since. Only "muted" (red)
+        still comes from our own note, since the unit does not report output
+        mutes reliably. Reads only. Returns True if anything changed."""
+        knob, mute, dim = (self.device.backend.read(e)[0] for e in self.device.hw_masks)
+        self._live = knob
+        blue = knob | mute | dim
+        before = (list(self.states), self.mono, self.pad)
+        for i in range(len(self.states)):
+            if blue >> i & 1:
+                self.states[i] = BLUE
+            elif self.states[i] == BLUE:
+                self.states[i] = SILVER
+        if self.device.hw_pad:
+            self.pad = bool(self.device.backend.read(self.device.hw_pad)[0])
+        if self.device.hw_mono:
+            self.mono = any(self.device.backend.read(e)[0] for e in self.device.hw_mono)
+        return (self.states, self.mono, self.pad) != before
+
     def live_mask(self) -> int:
         return self.refresh() if self._live is None else self._live
 
