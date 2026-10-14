@@ -118,7 +118,9 @@ attribute and the exe's "-20dB" / "Pad" control images refer to it.
 **The monitor knob appears to act on outputs 1/2 only, in firmware.** No
 register tried here brought another output under it: with output 3 in mask
 `0x0a` (alone, or in all three masks) its level did not move when the knob
-was turned from -30 to -70 dB. Outputs 1/2 are presumably in `0x0a` so that
+was turned from -30 to -70 dB. Adding the whole pair, outputs 3 and 4
+together, made no difference either: both stayed at -15.7 dB while the knob
+went from -30 to -41 dB. Outputs 1/2 are presumably in `0x0a` so that
 the knob, not the computer, sets their level; that was not tested by
 removing them. The ordinary output
 level and mute controls (unit `0x0a`) were measured on the same loop and are
