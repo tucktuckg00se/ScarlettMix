@@ -52,12 +52,22 @@ class Backend:
     def sample_rate(self) -> int | None:
         return None
 
+    def supported_rates(self) -> list[int]:
+        """Sample rates the interface's USB streams offer."""
+        return []
+
     def connection_id(self) -> str:
         """Changes every time the interface re-appears (power cycle, replug)."""
         return ""
 
     def close(self) -> None:
         pass
+
+
+def stream_rates(text: str) -> list[int]:
+    """Every rate in the ``Rates:`` lines of a /proc/asound/cardN/stream0."""
+    return sorted({int(r) for line in re.findall(r"Rates: (.*)", text)
+                   for r in re.findall(r"\d+", line)})
 
 
 class AlsaBackend(Backend):
@@ -101,6 +111,9 @@ class AlsaBackend(Backend):
             return None
         measured = int(m.group(1))
         return min((44100, 48000, 88200, 96000, 176400, 192000), key=lambda r: abs(r - measured))
+
+    def supported_rates(self):
+        return stream_rates(alsa._read(f"/proc/asound/card{self.card}/stream0"))
 
     def close(self):
         self._ctl.close()
@@ -216,6 +229,9 @@ class FakeBackend(Backend):
 
     def sample_rate(self):
         return 48000
+
+    def supported_rates(self):
+        return [44100, 48000, 88200, 96000]
 
     def connection_id(self):
         return f"sim/{self.connection}"

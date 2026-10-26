@@ -79,6 +79,8 @@ section at the right, with the original's names (DAW 1, Mix 1, Line Output 7).
   ("monitor knob"). Apart from this the program changes nothing by itself.
   Mono, the monitor Pad and the original's Monitor Preset menu are there too.
 - **Clock**: source selection, lock indicator, current sample rate.
+- **Rate and Buffer**: PipeWire's sample rate and buffer size (with its
+  latency), set from the header.
 - **Presets**: save and load complete setups as JSON, and open original
   MixControl snapshot files (`.18i20` and friends).
 
@@ -95,8 +97,15 @@ follows.
   patched driver in `../kernel` is loaded (`./load-test.sh`; a reboot or
   `./revert.sh` goes back to stock) and are absent otherwise. Details and
   measurements are in `docs/missing-features.md`.
-- The sample rate is shown but not set here; on Linux the audio server or
-  application chooses it.
+- Sample rate and buffer size belong to PipeWire on Linux, not to the
+  interface, so Rate and Buffer set PipeWire's clock (`clock.force-rate` and
+  `clock.force-quantum`, as `pw-metadata -n settings 0` would). A change
+  restarts the audio stream briefly and lasts until PipeWire restarts; while
+  it would be lost it is drawn with an outline. Keep ▸ "Keep these" writes
+  them as PipeWire's defaults to
+  `~/.config/pipewire/pipewire.conf.d/90-scarlettmix-clock.conf`; the other
+  Keep item, or deleting that file, undoes it from the next PipeWire start.
+  None of this is part of Save to Hardware.
 
 ## Keeping settings across power cycles
 

@@ -8,11 +8,12 @@ import time
 from PySide6.QtCore import QSignalBlocker, QSocketNotifier, Qt, QTimer
 from PySide6.QtGui import QAction, QIcon, QKeySequence
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QMainWindow, QSizePolicy, QStyle,
-                               QMessageBox, QPushButton, QSplitter, QTabWidget, QVBoxLayout,
+                               QMenu, QMessageBox, QPushButton, QSplitter, QTabWidget, QVBoxLayout,
                                QWidget)
 
 from .. import __version__, presets
 from ..alsa import AlsaError
+from ..audioserver import QUANTA, RATES, AudioServerError, FakeClock, PipeWireClock, conf_path
 from ..backend import AlsaBackend, Backend, find_cards
 from ..device import Device
 from ..mixer import MixController
@@ -382,6 +383,7 @@ class MainWindow(QMainWindow):
             self.clock.setCurrentIndex(d.get(d.clock_source)[0])
             self.clock.currentIndexChanged.connect(lambda i: d.set(d.clock_source, [i]))
             bar.addWidget(self.clock)
+        self._audio_controls(bar)
         chip = QFrame()
         chip.setObjectName("chip")
         chip_lay = QHBoxLayout(chip)
@@ -413,6 +415,145 @@ class MainWindow(QMainWindow):
             bar.addWidget(w)
         bar.insertSpacing(bar.indexOf(self.revert_button), theme.S2)
         return bar
+
+    # -- sample rate and buffer size (PipeWire's, not the interface's) -------
+
+    def _audio_controls(self, bar: QHBoxLayout) -> None:
+        d = self.device
+        # The simulated device gets a clock of its own, so the demo never
+        # changes the computer's audio.
+        self.audio = FakeClock() if d.backend.simulated else PipeWireClock()
+        change = ("Changing it restarts the audio stream (a short dropout). It lasts until "
+                  "PipeWire restarts unless you choose Keep.")
+        self.rate_combo = ItemCombo([])
+        self.rate_combo.setAccessibleName("Sample rate")
+        self.rate_combo.setToolTip("Sample rate of PipeWire's clock, which every application and "
+                                   "the interface run at. " + change)
+        self.rate_combo.addItem("Default", 0)
+        for r in d.backend.supported_rates() or RATES:
+            self.rate_combo.addItem(f"{r / 1000:g} kHz", r)
+            if r > 48000:
+                self.rate_combo.setItemData(self.rate_combo.count() - 1,
+                                            "At 88.2 and 96 kHz the interface has fewer channels "
+                                            "(ADAT 5–8 are not available).", Qt.ToolTipRole)
+        self.rate_combo.activated.connect(self._rate_chosen)
+        self.buffer_combo = ItemCombo([])
+        self.buffer_combo.setAccessibleName("Buffer size")
+        self.buffer_combo.setToolTip("Buffer size (PipeWire's quantum) in frames, and the latency "
+                                     "it adds. Smaller is quicker but needs more CPU. " + change)
+        self.buffer_combo.addItem("Default", 0)
+        for q in QUANTA:
+            self.buffer_combo.addItem(str(q), q)
+        self.buffer_combo.activated.connect(self._buffer_chosen)
+        self.keep_button = QPushButton("Keep")
+        self.keep_button.setObjectName("flat")
+        self.keep_button.setToolTip("Rate and buffer drawn with an outline are lost when PipeWire "
+                                    "restarts. Keep stores them in " + conf_path())
+        menu = QMenu(self.keep_button)
+        self._keep_action = menu.addAction("Keep these after PipeWire restarts", self._keep_audio)
+        self._forget_action = menu.addAction("Go back to PipeWire's defaults after it restarts",
+                                             self._forget_audio)
+        self.keep_button.setMenu(menu)
+        bar.addSpacing(theme.S2)
+        for w in (caption("Rate"), self.rate_combo, caption("Buffer"), self.buffer_combo,
+                  self.keep_button):
+            bar.addWidget(w)
+        self._audio_tips = (self.rate_combo.toolTip(), self.buffer_combo.toolTip())
+        self._audio_state = None
+        self._refresh_audio()
+
+    def _refresh_audio(self) -> None:
+        """Show PipeWire's clock as it is; reads only."""
+        widgets = (self.rate_combo, self.buffer_combo, self.keep_button)
+        try:
+            st = self.audio.read()
+            kept_rate, kept_quantum = self.audio.kept()
+        except AudioServerError as err:
+            self._audio_state = None
+            for w in widgets:
+                w.setEnabled(False)
+            self.rate_combo.setUnsaved(False)
+            self.buffer_combo.setUnsaved(False)
+            self.rate_combo.setToolTip(f"Not available: {err}")
+            self.buffer_combo.setToolTip(f"Not available: {err}")
+            return
+        self._audio_state = st
+        for w in widgets:
+            w.setEnabled(True)
+        self.rate_combo.setToolTip(self._audio_tips[0])
+        self.buffer_combo.setToolTip(self._audio_tips[1])
+        running = st.running_rate() or 48000
+
+        def latency(q: int) -> str:
+            return f"{q} · {q / running * 1000:.1f} ms"
+
+        dr, dq = st.default_rate(), st.default_quantum()
+        rc, bc = self.rate_combo, self.buffer_combo
+        with QSignalBlocker(rc), QSignalBlocker(bc):
+            rc.setItemText(0, f"Default ({dr / 1000:g} kHz)" if dr else "Default (follows apps)")
+            bc.setItemText(0, f"Default ({latency(dq)})" if dq else "Default (follows apps)")
+            for i in range(1, bc.count()):
+                bc.setItemText(i, latency(bc.itemData(i)))
+            for combo, value, text in ((rc, st.force_rate, f"{st.force_rate / 1000:g} kHz"),
+                                       (bc, st.force_quantum, latency(st.force_quantum))):
+                i = combo.findData(value)
+                if i < 0:           # set by another tool to a value not offered here
+                    combo.addItem(text, value)
+                    i = combo.count() - 1
+                combo.setCurrentIndex(i)
+        # Outline: what runs now differs from what PipeWire will use after a
+        # restart (the kept value, or its defaults if nothing is kept).
+        rate_now = st.force_rate or dr
+        quantum_now = st.force_quantum or dq
+        rate_lost = rate_now != (kept_rate or dr)
+        quantum_lost = quantum_now != (kept_quantum or dq)
+        rc.setUnsaved(rate_lost)
+        bc.setUnsaved(quantum_lost)
+        self._keep_action.setEnabled(rate_lost or quantum_lost)
+        self._forget_action.setEnabled(bool(kept_rate or kept_quantum))
+
+    def _rate_chosen(self, index: int) -> None:
+        rate = self.rate_combo.itemData(index)
+        self._set_audio(lambda: self.audio.set_rate(rate),
+                        f"Sample rate: {rate / 1000:g} kHz." if rate else
+                        "Sample rate: PipeWire's default.")
+
+    def _buffer_chosen(self, index: int) -> None:
+        quantum = self.buffer_combo.itemData(index)
+        self._set_audio(lambda: self.audio.set_quantum(quantum),
+                        f"Buffer size: {quantum} frames." if quantum else
+                        "Buffer size: PipeWire's default.")
+
+    def _set_audio(self, apply, message: str) -> None:
+        try:
+            apply()
+        except AudioServerError as err:
+            self.statusBar().showMessage(f"PipeWire refused: {err}", 8000)
+        else:
+            self.statusBar().showMessage(message + " Lost when PipeWire restarts unless kept.", 5000)
+        self._refresh_audio()
+
+    def _keep_audio(self) -> None:
+        st = self._audio_state
+        if not st:
+            return
+        kept_rate, kept_quantum = self.audio.kept()
+        try:
+            self.audio.keep(st.force_rate or kept_rate, st.force_quantum or kept_quantum)
+        except OSError as err:
+            self.statusBar().showMessage(f"Could not keep them: {err}", 8000)
+            return
+        self.statusBar().showMessage("Kept. PipeWire uses them from its next start.", 5000)
+        self._refresh_audio()
+
+    def _forget_audio(self) -> None:
+        try:
+            self.audio.keep(0, 0)
+        except OSError as err:
+            self.statusBar().showMessage(f"Could not remove the kept settings: {err}", 8000)
+            return
+        self.statusBar().showMessage("PipeWire goes back to its defaults at its next start.", 5000)
+        self._refresh_audio()
 
     def _update_saved(self) -> None:
         """Outline every control that is not saved to hardware, and say in the
@@ -615,6 +756,7 @@ class MainWindow(QMainWindow):
             self._disconnected()
             return
         self.rate.setText(f"{rate / 1000:g} kHz" if rate else "idle")
+        self._refresh_audio()
         try:
             if self.monitor_panel:
                 self.monitor_panel.refresh()        # reads only

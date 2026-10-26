@@ -832,3 +832,64 @@ def test_measurement_refuses_without_a_tone():
     with _pytest.raises(MeasureError):
         measure_gains(d, lambda ch: (lambda: None), sleep=lambda s: None)
     assert [d.item(e) for e in d.matrix_inputs] == routes          # nothing left changed
+
+
+# -- sample rate and buffer size (PipeWire) ---------------------------------
+
+PW_METADATA = """Found "settings" metadata 32
+update: id:0 key:'log.level' value:'2' type:''
+update: id:0 key:'clock.rate' value:'48000' type:''
+update: id:0 key:'clock.allowed-rates' value:'[ 48000 ]' type:''
+update: id:0 key:'clock.quantum' value:'1024' type:''
+update: id:0 key:'clock.min-quantum' value:'32' type:''
+update: id:0 key:'clock.max-quantum' value:'2048' type:''
+update: id:0 key:'clock.force-quantum' value:'256' type:''
+update: id:0 key:'clock.force-rate' value:'0' type:''
+"""
+
+
+def test_pipewire_clock_reading():
+    from scarlettmix.audioserver import ClockState, parse_metadata
+    st = ClockState(parse_metadata(PW_METADATA))
+    assert (st.force_rate, st.force_quantum) == (0, 256)
+    assert st.default_rate() == 48000 and st.default_quantum() == 0
+    assert st.running_rate() == 48000
+    st.allowed_rates = [44100, 48000]
+    assert st.default_rate() == 0
+
+
+def test_kept_clock_round_trips():
+    from scarlettmix.audioserver import conf_path, read_conf, write_conf
+    assert read_conf() == (0, 0)
+    write_conf(96000, 128)
+    assert read_conf() == (96000, 128)
+    text = open(conf_path()).read()
+    assert "default.clock.allowed-rates = [ 96000 ]" in text
+    assert "default.clock.max-quantum   = 128" in text
+    write_conf(0, 256)
+    assert read_conf() == (0, 256)
+    write_conf(0, 0)
+    assert not os.path.exists(conf_path())
+
+
+def test_stream_rates():
+    from scarlettmix.backend import stream_rates
+    text = "  Interface 1\n    Rates: 44100, 48000\n  Interface 1\n    Rates: 44100, 48000, 88200, 96000\n"
+    assert stream_rates(text) == [44100, 48000, 88200, 96000]
+
+
+def test_window_opens_without_changing_the_clock():
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from scarlettmix.ui.main_window import MainWindow
+    app = QApplication.instance() or QApplication([])
+    b = FakeBackend(extras=True)
+    win = MainWindow(b)
+    assert win.audio.writes == [] and b.writes == []
+    win.buffer_combo.activated.emit(win.buffer_combo.findData(256))
+    assert win.audio.read().force_quantum == 256
+    assert win.buffer_combo.unsaved()
+    win._keep_audio()
+    assert win.audio.kept() == (0, 256) and not win.buffer_combo.unsaved()
+    win.unsaved = False
+    win.close()
